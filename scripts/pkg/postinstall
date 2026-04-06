@@ -1,0 +1,20 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+TARGET_VOLUME="${3:-/}"
+APP_PATH="$TARGET_VOLUME/Applications/HermitFlow.app"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "HermitFlow installer verification failed: $APP_PATH was not installed." >&2
+  exit 1
+fi
+
+if [[ -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -f "$APP_PATH" >/dev/null 2>&1 || true
+fi
+
+touch "$APP_PATH" || true
+
+exit 0

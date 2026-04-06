@@ -24,6 +24,10 @@ final class FocusRouter {
 
     private func priority(for origin: FocusClientOrigin) -> Int {
         switch origin {
+        case .claudeVSCode:
+            return 2
+        case .claudeCLI:
+            return 1
         case .codexDesktop:
             return 3
         case .codexVSCode:

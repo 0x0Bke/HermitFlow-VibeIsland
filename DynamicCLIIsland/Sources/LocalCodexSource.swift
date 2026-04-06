@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Network
 
 struct LocalCodexSource: @unchecked Sendable {
     private let stateDatabaseURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/state_5.sqlite")
@@ -242,13 +243,6 @@ struct LocalCodexSource: @unchecked Sendable {
         if latestExplicitRunningAt > 0,
            now - latestExplicitRunningAt <= runningSignalMaxAge,
            latestExplicitRunningAt >= latestTerminalAt {
-            return .running
-        }
-
-        // `threads.updated_at` is a weak fallback; it should not suppress a recent terminal state.
-        if snapshot.threadUpdatedAt > 0,
-           now - snapshot.threadUpdatedAt <= runningSignalMaxAge,
-           latestTerminalAt == 0 {
             return .running
         }
 
@@ -587,7 +581,9 @@ struct LocalCodexSource: @unchecked Sendable {
             commandSummary: summarizeCommand(latestPending.command),
             rationale: latestPending.justification,
             focusTarget: focusTarget,
-            createdAt: latestPending.timestamp
+            createdAt: latestPending.timestamp,
+            source: .codex,
+            resolutionKind: .accessibilityAutomation
         )
     }
 
@@ -788,11 +784,11 @@ struct LocalCodexSource: @unchecked Sendable {
 
         if let focusTarget {
             switch focusTarget.clientOrigin {
-            case .codexDesktop, .codexVSCode:
+            case .claudeVSCode, .codexDesktop, .codexVSCode:
                 return isClientRunning(focusTarget.clientOrigin)
                     || hasActiveWorkspaceMatch
                     || idleAge <= unconfirmedDesktopSessionLookback
-            case .codexCLI, .unknown:
+            case .claudeCLI, .codexCLI, .unknown:
                 break
             }
         }
@@ -810,9 +806,9 @@ struct LocalCodexSource: @unchecked Sendable {
         }
 
         switch focusTarget.clientOrigin {
-        case .codexCLI:
+        case .claudeCLI, .codexCLI:
             return isClientRunning(.codexCLI)
-        case .codexDesktop, .codexVSCode:
+        case .claudeVSCode, .codexDesktop, .codexVSCode:
             return isClientRunning(focusTarget.clientOrigin) || hasActiveWorkspaceMatch
         case .unknown:
             return true
@@ -945,6 +941,10 @@ struct LocalCodexSource: @unchecked Sendable {
     private func isClientRunning(_ origin: FocusClientOrigin) -> Bool {
         let bundleIdentifiers: [String]
         switch origin {
+        case .claudeCLI:
+            bundleIdentifiers = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.github.wez.wezterm", "com.mitchellh.ghostty", "org.alacritty"]
+        case .claudeVSCode:
+            bundleIdentifiers = ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.todesktop.230313mzl4w4u92"]
         case .codexDesktop:
             bundleIdentifiers = ["com.openai.codex"]
         case .codexVSCode:
@@ -1112,4 +1112,1117 @@ private struct TUILogThreadSnapshot {
     var lastSeenAt: TimeInterval = 0
     var lastTurnAt: TimeInterval = 0
     var shutdownAt: TimeInterval = 0
+}
+
+final class LocalClaudeSource: @unchecked Sendable {
+    private let bridge = ClaudeHookBridge.shared
+
+    func bootstrap() {
+        bridge.start()
+        bridge.syncHooks()
+    }
+
+    func resyncHooks() {
+        bridge.start()
+        bridge.syncHooks()
+    }
+
+    func fetchActivity() -> ActivitySourceSnapshot {
+        bridge.activitySnapshot()
+    }
+
+    func fetchLatestApprovalRequest() -> ApprovalRequest? {
+        bridge.latestApprovalRequest()
+    }
+
+    func resolveApproval(id: String, decision: ApprovalDecision) -> Bool {
+        bridge.resolveApproval(id: id, decision: decision)
+    }
+}
+
+private final class ClaudeHookBridge: @unchecked Sendable {
+    static let shared = ClaudeHookBridge()
+
+    private let queue = DispatchQueue(label: "HermitFlow.claudeHookBridge")
+    private let listenerQueue = DispatchQueue(label: "HermitFlow.claudeHookListener")
+    private let listenerPort: UInt16 = 46821
+    private let sessionStaleThreshold: TimeInterval = 10 * 60
+    private let approvalTimeout: TimeInterval = 90
+    private let successDisplayHold: TimeInterval = 1.25
+    private let failureDisplayHold: TimeInterval = 2.0
+    private let trailingRunningIgnoreWindow: TimeInterval = 2.0
+    private let hookRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-hooks")
+    private let defaultSettingsURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")
+    private let customSettingsPathsURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-settings-paths.json")
+    private let customSettingsPathsEnvironmentKey = "HERMITFLOW_CLAUDE_SETTINGS_PATHS"
+    private let hookScriptName = "hermit-claude-hook.js"
+    private let hookMarker = "hermit-claude-hook.js"
+    private let permissionHookPath = "/permission/hermitflow"
+
+    private var listener: NWListener?
+    private var sessions: [String: ClaudeTrackedSession] = [:]
+    private var approvals: [String: ClaudePendingApproval] = [:]
+    private var approvalOrder: [String] = []
+    private var lastErrorMessage: String?
+
+    func start() {
+        queue.sync {
+            guard listener == nil else {
+                return
+            }
+
+            do {
+                let port = NWEndpoint.Port(rawValue: listenerPort) ?? .any
+                let listener = try NWListener(using: .tcp, on: port)
+                listener.newConnectionHandler = { [weak self] connection in
+                    self?.accept(connection: connection)
+                }
+                listener.stateUpdateHandler = { [weak self] state in
+                    self?.handleListenerState(state)
+                }
+                listener.start(queue: listenerQueue)
+                self.listener = listener
+            } catch {
+                lastErrorMessage = "Claude hook listener unavailable"
+            }
+        }
+    }
+
+    func syncHooks() {
+        do {
+            try writeHookScriptIfNeeded()
+            try syncClaudeSettings()
+            queue.sync {
+                lastErrorMessage = nil
+            }
+        } catch {
+            queue.sync {
+                lastErrorMessage = "Claude hook setup failed: \(describeClaudeHookConfigurationError(error))"
+            }
+        }
+    }
+
+    func activitySnapshot() -> ActivitySourceSnapshot {
+        queue.sync {
+            cleanupExpiredState(now: .now)
+            let sessions = makeSnapshots()
+            let lastUpdatedAt = sessions.map(\.updatedAt).max() ?? .now
+            let statusMessage: String
+            if sessions.isEmpty {
+                statusMessage = "Waiting for Claude Code activity"
+            } else if sessions.count == 1 {
+                statusMessage = "Watching Claude Code activity"
+            } else {
+                statusMessage = "Watching \(sessions.count) Claude Code sessions"
+            }
+
+            return ActivitySourceSnapshot(
+                sessions: sessions,
+                statusMessage: statusMessage,
+                lastUpdatedAt: lastUpdatedAt,
+                errorMessage: lastErrorMessage,
+                approvalRequest: latestApprovalRequestLocked()
+            )
+        }
+    }
+
+    func latestApprovalRequest() -> ApprovalRequest? {
+        queue.sync {
+            cleanupExpiredState(now: .now)
+            return latestApprovalRequestLocked()
+        }
+    }
+
+    func resolveApproval(id: String, decision: ApprovalDecision) -> Bool {
+        queue.sync {
+            cleanupExpiredState(now: .now)
+            guard let approval = approvals.removeValue(forKey: id) else {
+                approvalOrder.removeAll { $0 == id }
+                return false
+            }
+
+            approvalOrder.removeAll { $0 == id }
+
+            let response = makePermissionDecision(for: decision)
+            sendHTTPResponse(
+                status: 200,
+                body: response,
+                contentType: "application/json",
+                on: approval.connection
+            )
+            return true
+        }
+    }
+
+    private func handleListenerState(_ state: NWListener.State) {
+        queue.sync {
+            switch state {
+            case .ready:
+                lastErrorMessage = nil
+            case let .failed(error):
+                lastErrorMessage = "Claude hook listener failed: \(error.localizedDescription)"
+                listener?.cancel()
+                listener = nil
+            default:
+                break
+            }
+        }
+    }
+
+    private func accept(connection: NWConnection) {
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self, let connection else {
+                return
+            }
+
+            if case .ready = state {
+                self.readRequest(on: connection, buffer: Data())
+            } else if case .failed = state {
+                self.cleanupConnection(connection)
+            } else if case .cancelled = state {
+                self.cleanupConnection(connection)
+            }
+        }
+        connection.start(queue: listenerQueue)
+    }
+
+    private func readRequest(on connection: NWConnection, buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else {
+                return
+            }
+
+            if error != nil {
+                self.cleanupConnection(connection)
+                return
+            }
+
+            var accumulated = buffer
+            if let data, !data.isEmpty {
+                accumulated.append(data)
+            }
+
+            if let request = self.parseRequest(from: accumulated) {
+                self.handle(request: request, on: connection)
+                return
+            }
+
+            if isComplete {
+                self.sendHTTPResponse(status: 400, body: "bad request", contentType: "text/plain", on: connection)
+                return
+            }
+
+            self.readRequest(on: connection, buffer: accumulated)
+        }
+    }
+
+    private func handle(request: ParsedHTTPRequest, on connection: NWConnection) {
+        switch (request.method, request.path) {
+        case ("GET", "/health"), ("GET", "/state"):
+            let body = "{\"ok\":true,\"app\":\"HermitFlow\",\"port\":\(listenerPort)}"
+            sendHTTPResponse(status: 200, body: body, contentType: "application/json", on: connection)
+        case ("POST", "/state"):
+            handleState(body: request.body, on: connection)
+        case ("POST", "/permission"), ("POST", permissionHookPath):
+            handlePermission(body: request.body, on: connection)
+        default:
+            sendHTTPResponse(status: 404, body: "not found", contentType: "text/plain", on: connection)
+        }
+    }
+
+    private func handleState(body: Data, on connection: NWConnection) {
+        guard let payload = try? JSONDecoder().decode(ClaudeHookEventPayload.self, from: body) else {
+            sendHTTPResponse(status: 400, body: "bad json", contentType: "text/plain", on: connection)
+            return
+        }
+
+        queue.sync {
+            cleanupExpiredState(now: .now)
+            let sessionID = payload.sessionID.isEmpty ? "default" : payload.sessionID
+
+            if payload.event == "SessionEnd" {
+                sessions.removeValue(forKey: sessionID)
+                approvalOrder = approvalOrder.filter { approvalID in
+                    approvals[approvalID]?.sessionID != sessionID
+                }
+                approvals = approvals.filter { _, approval in
+                    approval.sessionID != sessionID
+                }
+            } else {
+                let now = Date()
+                sessions[sessionID] = mergedClaudeSession(
+                    existing: sessions[sessionID],
+                    payload: payload,
+                    now: now
+                )
+            }
+            lastErrorMessage = nil
+        }
+
+        sendHTTPResponse(status: 200, body: "ok", contentType: "text/plain", on: connection)
+    }
+
+    private func handlePermission(body: Data, on connection: NWConnection) {
+        guard let payload = try? JSONDecoder().decode(ClaudeHookPermissionPayload.self, from: body) else {
+            sendHTTPResponse(status: 400, body: "bad json", contentType: "text/plain", on: connection)
+            return
+        }
+
+        queue.sync {
+            cleanupExpiredState(now: .now)
+
+            let requestID = UUID().uuidString
+            let sessionID = payload.sessionID.isEmpty ? "default" : payload.sessionID
+            let summary = summarizePermissionRequest(payload)
+            let rationale = payload.permissionSuggestions?.isEmpty == false
+                ? "Claude Code is waiting for a permission decision."
+                : "Claude Code requested tool access."
+
+            approvals[requestID] = ClaudePendingApproval(
+                id: requestID,
+                sessionID: sessionID,
+                createdAt: .now,
+                commandSummary: summary,
+                rationale: rationale,
+                connection: connection
+            )
+            approvalOrder.removeAll { $0 == requestID }
+            approvalOrder.append(requestID)
+
+            let existing = sessions[sessionID]
+            sessions[sessionID] = ClaudeTrackedSession(
+                rawSessionID: sessionID,
+                cwd: existing?.cwd ?? "",
+                source: existing?.source ?? payload.toolName,
+                status: .running,
+                lastEvent: "PermissionRequest",
+                lastActivityAt: .now
+            )
+        }
+    }
+
+    private func cleanupConnection(_ connection: NWConnection) {
+        queue.sync {
+            let matchingIDs = approvals.compactMap { key, approval in
+                approval.connection === connection ? key : nil
+            }
+            for id in matchingIDs {
+                approvals.removeValue(forKey: id)
+                approvalOrder.removeAll { $0 == id }
+            }
+        }
+    }
+
+    private func cleanupExpiredState(now: Date) {
+        sessions = sessions.filter { _, session in
+            now.timeIntervalSince(session.lastActivityAt) <= sessionStaleThreshold
+        }
+
+        let expiredApprovalIDs = approvals.compactMap { key, approval in
+            now.timeIntervalSince(approval.createdAt) > approvalTimeout ? key : nil
+        }
+        for id in expiredApprovalIDs {
+            if let approval = approvals.removeValue(forKey: id) {
+                let response = makePermissionDecision(for: .reject, message: "Approval timed out in HermitFlow")
+                sendHTTPResponse(status: 200, body: response, contentType: "application/json", on: approval.connection)
+            }
+        }
+        if !expiredApprovalIDs.isEmpty {
+            approvalOrder.removeAll { expiredApprovalIDs.contains($0) }
+        }
+    }
+
+    private func latestApprovalRequestLocked() -> ApprovalRequest? {
+        for approvalID in approvalOrder.reversed() {
+            guard let approval = approvals[approvalID] else {
+                continue
+            }
+
+            return ApprovalRequest(
+                id: approval.id,
+                commandSummary: approval.commandSummary,
+                rationale: approval.rationale,
+                focusTarget: nil,
+                createdAt: approval.createdAt,
+                source: .claude,
+                resolutionKind: .localHTTPHook
+            )
+        }
+
+        return nil
+    }
+
+    private func makeSnapshots() -> [AgentSessionSnapshot] {
+        sessions.values.sorted { lhs, rhs in
+            lhs.lastActivityAt > rhs.lastActivityAt
+        }.map { session in
+            let resolvedStatus = resolvedStatus(for: session, now: .now)
+            return AgentSessionSnapshot(
+                id: "claude:\(session.rawSessionID)",
+                origin: .claude,
+                title: session.title,
+                detail: session.detail,
+                activityState: resolvedStatus.activityState,
+                updatedAt: session.lastActivityAt,
+                cwd: session.cwd.isEmpty ? nil : session.cwd,
+                focusTarget: nil,
+                freshness: .live
+            )
+        }
+    }
+
+    private func mergedClaudeSession(
+        existing: ClaudeTrackedSession?,
+        payload: ClaudeHookEventPayload,
+        now: Date
+    ) -> ClaudeTrackedSession {
+        let incomingStatus = ClaudeTrackedSession.status(for: payload.event, state: payload.state)
+
+        if let existing,
+           incomingStatus == .running,
+           existing.status == .idle,
+           !ClaudeTrackedSession.isExplicitRunningEvent(payload.event) {
+            return ClaudeTrackedSession(
+                rawSessionID: existing.rawSessionID,
+                cwd: payload.cwd.isEmpty ? existing.cwd : payload.cwd,
+                source: payload.source.isEmpty ? existing.source : payload.source,
+                status: .idle,
+                lastEvent: existing.lastEvent,
+                lastActivityAt: existing.lastActivityAt
+            )
+        }
+
+        if let existing,
+           incomingStatus == .running,
+           existing.status.isTerminal,
+           now.timeIntervalSince(existing.lastActivityAt) <= trailingRunningIgnoreWindow,
+           ClaudeTrackedSession.isTrailingRunningEvent(payload.event) {
+            return ClaudeTrackedSession(
+                rawSessionID: existing.rawSessionID,
+                cwd: payload.cwd.isEmpty ? existing.cwd : payload.cwd,
+                source: payload.source.isEmpty ? existing.source : payload.source,
+                status: existing.status,
+                lastEvent: existing.lastEvent,
+                lastActivityAt: existing.lastActivityAt
+            )
+        }
+
+        return ClaudeTrackedSession(
+            rawSessionID: existing?.rawSessionID ?? payload.sessionID,
+            cwd: payload.cwd.isEmpty ? existing?.cwd ?? "" : payload.cwd,
+            source: payload.source.isEmpty ? existing?.source ?? "" : payload.source,
+            status: incomingStatus,
+            lastEvent: payload.event,
+            lastActivityAt: now
+        )
+    }
+
+    private func resolvedStatus(for session: ClaudeTrackedSession, now: Date) -> ClaudeTrackedSession.Status {
+        switch session.status {
+        case .success:
+            return now.timeIntervalSince(session.lastActivityAt) >= successDisplayHold ? .idle : .success
+        case .failure:
+            return now.timeIntervalSince(session.lastActivityAt) >= failureDisplayHold ? .idle : .failure
+        case .idle, .running:
+            return session.status
+        }
+    }
+
+    private func summarizePermissionRequest(_ payload: ClaudeHookPermissionPayload) -> String {
+        if payload.toolName == "Bash",
+           let command = payload.toolInput?.command,
+           !command.isEmpty {
+            return summarizeCommand(command)
+        }
+
+        if let path = payload.toolInput?.filePath, !path.isEmpty {
+            return "\(payload.toolName) · \(path)"
+        }
+
+        if let command = payload.toolInput?.command, !command.isEmpty {
+            return "\(payload.toolName) · \(summarizeCommand(command))"
+        }
+
+        return payload.toolName
+    }
+
+    private func summarizeCommand(_ command: String) -> String {
+        let singleLine = command
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard singleLine.count > 96 else {
+            return singleLine
+        }
+
+        return String(singleLine.prefix(96)) + "..."
+    }
+
+    private func makePermissionDecision(for decision: ApprovalDecision, message: String? = nil) -> String {
+        let behavior: String
+        switch decision {
+        case .reject:
+            behavior = "deny"
+        case .accept, .acceptAll:
+            behavior = "allow"
+        }
+
+        var decisionObject: [String: Any] = ["behavior": behavior]
+        if let message, !message.isEmpty {
+            decisionObject["message"] = message
+        }
+
+        let body: [String: Any] = [
+            "hookSpecificOutput": [
+                "hookEventName": "PermissionRequest",
+                "decision": decisionObject
+            ]
+        ]
+
+        let data = (try? JSONSerialization.data(withJSONObject: body, options: [])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\"}}}"
+    }
+
+    private func sendHTTPResponse(status: Int, body: String, contentType: String, on connection: NWConnection) {
+        let bodyData = Data(body.utf8)
+        var header = "HTTP/1.1 \(status) \(httpStatusMessage(for: status))\r\n"
+        header += "Content-Type: \(contentType)\r\n"
+        header += "Content-Length: \(bodyData.count)\r\n"
+        header += "Connection: close\r\n\r\n"
+
+        var payload = Data(header.utf8)
+        payload.append(bodyData)
+
+        connection.send(content: payload, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private func httpStatusMessage(for status: Int) -> String {
+        switch status {
+        case 200:
+            return "OK"
+        case 400:
+            return "Bad Request"
+        case 404:
+            return "Not Found"
+        default:
+            return "Error"
+        }
+    }
+
+    private func parseRequest(from data: Data) -> ParsedHTTPRequest? {
+        guard let separatorRange = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return nil
+        }
+
+        let headerData = data.subdata(in: 0 ..< separatorRange.lowerBound)
+        guard let headerText = String(data: headerData, encoding: .utf8) else {
+            return nil
+        }
+
+        let lines = headerText.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first else {
+            return nil
+        }
+
+        let requestParts = requestLine.split(separator: " ")
+        guard requestParts.count >= 2 else {
+            return nil
+        }
+
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colonIndex = line.firstIndex(of: ":") else {
+                continue
+            }
+
+            let key = line[..<colonIndex].lowercased()
+            let value = line[line.index(after: colonIndex)...].trimmingCharacters(in: .whitespaces)
+            headers[key] = value
+        }
+
+        let contentLength = Int(headers["content-length"] ?? "") ?? 0
+        let bodyStart = separatorRange.upperBound
+        guard data.count >= bodyStart + contentLength else {
+            return nil
+        }
+
+        let body = data.subdata(in: bodyStart ..< bodyStart + contentLength)
+        return ParsedHTTPRequest(
+            method: String(requestParts[0]),
+            path: String(requestParts[1]),
+            body: body
+        )
+    }
+
+    private func writeHookScriptIfNeeded() throws {
+        try FileManager.default.createDirectory(at: hookRootURL, withIntermediateDirectories: true, attributes: nil)
+        let scriptURL = hookRootURL.appendingPathComponent(hookScriptName)
+        let content = """
+        #!/usr/bin/env node
+        const http = require("http");
+
+        const EVENT_TO_STATE = {
+          SessionStart: "idle",
+          SessionEnd: "sleeping",
+          UserPromptSubmit: "thinking",
+          PreToolUse: "working",
+          PostToolUse: "working",
+          PostToolUseFailure: "error",
+          StopFailure: "error",
+          Stop: "attention",
+          SubagentStart: "juggling",
+          SubagentStop: "working",
+          PreCompact: "sweeping",
+          PostCompact: "attention",
+          Notification: "notification",
+          Elicitation: "notification",
+          WorktreeCreate: "carrying"
+        };
+
+        const event = process.argv[2];
+        if (!EVENT_TO_STATE[event]) process.exit(0);
+
+        const chunks = [];
+        let sent = false;
+
+        process.stdin.on("data", (chunk) => chunks.push(chunk));
+        process.stdin.on("end", send);
+        setTimeout(send, 350);
+
+        function send() {
+          if (sent) return;
+          sent = true;
+
+          let payload = {};
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {}
+
+          const body = JSON.stringify({
+            event,
+            state: EVENT_TO_STATE[event],
+            session_id: payload.session_id || "default",
+            cwd: payload.cwd || "",
+            source: payload.source || payload.reason || ""
+          });
+
+          const req = http.request({
+            hostname: "127.0.0.1",
+            port: \(listenerPort),
+            path: "/state",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body)
+            },
+            timeout: 500
+          }, (res) => {
+            res.resume();
+            res.on("end", () => process.exit(0));
+          });
+
+          req.on("error", () => process.exit(0));
+          req.on("timeout", () => {
+            req.destroy();
+            process.exit(0);
+          });
+          req.write(body);
+          req.end();
+        }
+        """
+        try content.write(to: scriptURL, atomically: true, encoding: .utf8)
+    }
+
+    private func syncClaudeSettings() throws {
+        let nodePath = resolveNodeBinary()
+        let scriptPath = hookRootURL.appendingPathComponent(hookScriptName).path
+        let commandEvents = [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "StopFailure",
+            "Stop",
+            "SubagentStart",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
+            "Notification",
+            "Elicitation",
+            "WorktreeCreate"
+        ]
+
+        let permissionURL = "http://127.0.0.1:\(listenerPort)\(permissionHookPath)"
+        let settingsURLs = try resolvedClaudeSettingsURLs()
+        var syncedAnyFile = false
+        var failures: [String] = []
+
+        for settingsURL in settingsURLs {
+            do {
+                try syncClaudeSettings(
+                    at: settingsURL,
+                    nodePath: nodePath,
+                    scriptPath: scriptPath,
+                    commandEvents: commandEvents,
+                    permissionURL: permissionURL
+                )
+                syncedAnyFile = true
+            } catch {
+                failures.append("\(settingsURL.path): \(describeClaudeHookConfigurationError(error))")
+            }
+        }
+
+        if !failures.isEmpty {
+            if syncedAnyFile {
+                throw ClaudeHookConfigurationError.partialSyncFailed(failures)
+            }
+            throw ClaudeHookConfigurationError.syncFailed(failures)
+        }
+    }
+
+    private func syncClaudeSettings(
+        at settingsURL: URL,
+        nodePath: String,
+        scriptPath: String,
+        commandEvents: [String],
+        permissionURL: String
+    ) throws {
+        let fileManager = FileManager.default
+        let settingsDirectoryURL = settingsURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: settingsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+
+        let settings = try loadJSONObjectIfPresent(at: settingsURL) ?? [:]
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+
+        for event in commandEvents {
+            let command = "\"\(nodePath)\" \"\(scriptPath)\" \(event)"
+            hooks[event] = upsertCommandHook(into: hooks[event], command: command)
+        }
+
+        hooks["PermissionRequest"] = upsertHTTPHook(into: hooks["PermissionRequest"], url: permissionURL)
+
+        var updatedSettings = settings
+        updatedSettings["hooks"] = hooks
+        try writeJSONObject(updatedSettings, to: settingsURL)
+    }
+
+    private func resolvedClaudeSettingsURLs() throws -> [URL] {
+        var urls: [URL] = [defaultSettingsURL]
+        urls.append(contentsOf: try loadCustomSettingsURLs())
+        urls.append(contentsOf: loadEnvironmentSettingsURLs())
+
+        var seenPaths = Set<String>()
+        return urls.filter { url in
+            let standardizedPath = url.standardizedFileURL.path
+            guard !standardizedPath.isEmpty, !seenPaths.contains(standardizedPath) else {
+                return false
+            }
+            seenPaths.insert(standardizedPath)
+            return true
+        }
+    }
+
+    private func loadCustomSettingsURLs() throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: customSettingsPathsURL.path) else {
+            return []
+        }
+
+        let data = try Data(contentsOf: customSettingsPathsURL)
+        let object = try parseRelaxedJSONObjectData(data, sourcePath: customSettingsPathsURL.path)
+
+        let rawPaths: [String]
+        if let array = object as? [String] {
+            rawPaths = array
+        } else if let dictionary = object as? [String: Any],
+                  let paths = dictionary["paths"] as? [String] {
+            rawPaths = paths
+        } else {
+            throw ClaudeHookConfigurationError.invalidCustomSettingsPathsFile(customSettingsPathsURL.path)
+        }
+
+        return rawPaths.compactMap(expandedFileURL(from:))
+    }
+
+    private func loadEnvironmentSettingsURLs() -> [URL] {
+        guard let rawValue = ProcessInfo.processInfo.environment[customSettingsPathsEnvironmentKey],
+              !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+
+        return rawValue
+            .split(whereSeparator: { $0 == "\n" || $0 == ";" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .compactMap(expandedFileURL(from:))
+    }
+
+    private func parseRelaxedJSONObjectData(_ data: Data, sourcePath: String) throws -> Any {
+        if let object = try? JSONSerialization.jsonObject(with: data) {
+            return object
+        }
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ClaudeHookConfigurationError.invalidCustomSettingsPathsFile(sourcePath)
+        }
+
+        let relaxedText = text.replacingOccurrences(
+            of: ",(\\s*[\\]\\}])",
+            with: "$1",
+            options: .regularExpression
+        )
+
+        guard let relaxedData = relaxedText.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: relaxedData) else {
+            throw ClaudeHookConfigurationError.invalidCustomSettingsPathsFile(sourcePath)
+        }
+
+        return object
+    }
+
+    private func expandedFileURL(from rawPath: String) -> URL? {
+        let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            return nil
+        }
+
+        let expandedPath = (trimmedPath as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expandedPath).standardizedFileURL
+    }
+
+    private func loadJSONObjectIfPresent(at url: URL) throws -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: url)
+        if data.isEmpty {
+            return [:]
+        }
+
+        if let text = String(data: data, encoding: .utf8),
+           text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return [:]
+        }
+
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let dictionary = object as? [String: Any] else {
+            throw ClaudeHookConfigurationError.invalidSettingsRoot
+        }
+        return dictionary
+    }
+
+    private func writeJSONObject(_ object: [String: Any], to url: URL) throws {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func upsertCommandHook(into existingValue: Any?, command: String) -> [[String: Any]] {
+        var entries = (existingValue as? [[String: Any]]) ?? []
+        var found = false
+
+        for index in entries.indices {
+            guard var hooks = entries[index]["hooks"] as? [[String: Any]] else {
+                continue
+            }
+
+            for hookIndex in hooks.indices {
+                guard let existingCommand = hooks[hookIndex]["command"] as? String,
+                      existingCommand.contains(hookMarker)
+                else {
+                    continue
+                }
+
+                hooks[hookIndex]["type"] = "command"
+                hooks[hookIndex]["command"] = command
+                entries[index]["hooks"] = hooks
+                found = true
+            }
+        }
+
+        if !found {
+            entries.append([
+                "matcher": "",
+                "hooks": [
+                    [
+                        "type": "command",
+                        "command": command
+                    ]
+                ]
+            ])
+        }
+
+        return entries
+    }
+
+    private func upsertHTTPHook(into existingValue: Any?, url: String) -> [[String: Any]] {
+        var entries = (existingValue as? [[String: Any]]) ?? []
+        var found = false
+
+        for index in entries.indices {
+            guard var hooks = entries[index]["hooks"] as? [[String: Any]] else {
+                continue
+            }
+
+            for hookIndex in hooks.indices {
+                guard let hookURL = hooks[hookIndex]["url"] as? String,
+                      ownedPermissionHookURLs.contains(hookURL)
+                else {
+                    continue
+                }
+
+                hooks[hookIndex]["type"] = "http"
+                hooks[hookIndex]["url"] = url
+                hooks[hookIndex]["timeout"] = 600
+                entries[index]["hooks"] = hooks
+                found = true
+            }
+        }
+
+        if !found {
+            entries.append([
+                "matcher": "",
+                "hooks": [
+                    [
+                        "type": "http",
+                        "url": url,
+                        "timeout": 600
+                    ]
+                ]
+            ])
+        }
+
+        return entries
+    }
+
+    private var ownedPermissionHookURLs: Set<String> {
+        [
+            "http://127.0.0.1:\(listenerPort)\(permissionHookPath)",
+            "http://localhost:\(listenerPort)\(permissionHookPath)",
+            "http://127.0.0.1:\(listenerPort)/permission",
+            "http://localhost:\(listenerPort)/permission"
+        ]
+    }
+
+    private func resolveNodeBinary() -> String {
+        let fileManager = FileManager.default
+        let candidates = [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node"
+        ]
+
+        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["node"]
+        process.standardOutput = output
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            if process.terminationStatus == 0,
+               let path = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !path.isEmpty {
+                return path
+            }
+        } catch {}
+
+        return "node"
+    }
+
+    private func describeClaudeHookConfigurationError(_ error: Error) -> String {
+        guard let configurationError = error as? ClaudeHookConfigurationError else {
+            return error.localizedDescription
+        }
+
+        switch configurationError {
+        case .invalidSettingsRoot:
+            return "settings root is not a JSON object"
+        case let .invalidCustomSettingsPathsFile(path):
+            return "custom settings path file is invalid: \(path)"
+        case let .partialSyncFailed(reasons), let .syncFailed(reasons):
+            return reasons.joined(separator: "; ")
+        }
+    }
+}
+
+private enum ClaudeHookConfigurationError: Error {
+    case invalidSettingsRoot
+    case invalidCustomSettingsPathsFile(String)
+    case partialSyncFailed([String])
+    case syncFailed([String])
+}
+
+private struct ClaudeTrackedSession {
+    enum Status {
+        case idle
+        case running
+        case success
+        case failure
+
+        var isTerminal: Bool {
+            switch self {
+            case .success, .failure:
+                return true
+            case .idle, .running:
+                return false
+            }
+        }
+
+        var activityState: IslandCodexActivityState {
+            switch self {
+            case .idle:
+                return .idle
+            case .running:
+                return .running
+            case .success:
+                return .success
+            case .failure:
+                return .failure
+            }
+        }
+    }
+
+    let rawSessionID: String
+    let cwd: String
+    let source: String
+    let status: Status
+    let lastEvent: String
+    let lastActivityAt: Date
+
+    var title: String {
+        "Claude Code"
+    }
+
+    var detail: String {
+        if !cwd.isEmpty {
+            return cwd
+        }
+
+        if !source.isEmpty {
+            return source
+        }
+
+        return lastEvent
+    }
+
+    static func status(for event: String, state: String) -> Status {
+        if state == "error" || event == "PostToolUseFailure" || event == "StopFailure" {
+            return .failure
+        }
+        if state == "attention" || event == "Stop" || event == "PostCompact" {
+            return .success
+        }
+        if state == "notification" || event == "Notification" || event == "Elicitation" {
+            return .idle
+        }
+        if state == "idle" || state == "sleeping" {
+            return .idle
+        }
+        return .running
+    }
+
+    static func isTrailingRunningEvent(_ event: String) -> Bool {
+        switch event {
+        case "PostToolUse", "SubagentStop", "Notification", "Elicitation":
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func isExplicitRunningEvent(_ event: String) -> Bool {
+        switch event {
+        case "UserPromptSubmit", "PreToolUse", "SubagentStart", "PreCompact", "WorktreeCreate", "PermissionRequest":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+private final class ClaudePendingApproval {
+    let id: String
+    let sessionID: String
+    let createdAt: Date
+    let commandSummary: String
+    let rationale: String?
+    let connection: NWConnection
+
+    init(
+        id: String,
+        sessionID: String,
+        createdAt: Date,
+        commandSummary: String,
+        rationale: String?,
+        connection: NWConnection
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.createdAt = createdAt
+        self.commandSummary = commandSummary
+        self.rationale = rationale
+        self.connection = connection
+    }
+}
+
+private struct ParsedHTTPRequest {
+    let method: String
+    let path: String
+    let body: Data
+}
+
+private struct ClaudeHookEventPayload: Decodable {
+    let event: String
+    let state: String
+    let sessionID: String
+    let cwd: String
+    let source: String
+
+    private enum CodingKeys: String, CodingKey {
+        case event
+        case state
+        case sessionID = "session_id"
+        case cwd
+        case source
+    }
+}
+
+private struct ClaudeHookPermissionPayload: Decodable {
+    struct ToolInput: Decodable {
+        let command: String?
+        let filePath: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case command
+            case filePath = "file_path"
+        }
+    }
+
+    struct PermissionSuggestion: Decodable {
+        let type: String?
+    }
+
+    let sessionID: String
+    let toolName: String
+    let toolInput: ToolInput?
+    let permissionSuggestions: [PermissionSuggestion]?
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case toolName = "tool_name"
+        case toolInput = "tool_input"
+        case permissionSuggestions = "permission_suggestions"
+    }
 }

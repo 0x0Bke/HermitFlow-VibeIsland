@@ -116,6 +116,10 @@ final class FocusLauncher {
 
     func performApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> ApprovalExecutionResult {
         switch target.clientOrigin {
+        case .claudeCLI:
+            return performTerminalApproval(decision, for: target)
+        case .claudeVSCode:
+            return performGraphicalApproval(decision, for: target)
         case .codexDesktop:
             return bringToFront(target) ? .routedToWindow : .applicationNotFound
         case .codexCLI:
@@ -248,6 +252,46 @@ final class FocusLauncher {
 
     private func appDescriptors(for target: FocusTarget) -> [FocusAppDescriptor] {
         switch target.clientOrigin {
+        case .claudeVSCode:
+            return [
+                FocusAppDescriptor(bundleIdentifier: "com.microsoft.VSCode", appName: "Visual Studio Code"),
+                FocusAppDescriptor(bundleIdentifier: "com.microsoft.VSCodeInsiders", appName: "Visual Studio Code - Insiders"),
+                FocusAppDescriptor(bundleIdentifier: "com.todesktop.230313mzl4w4u92", appName: "Cursor")
+            ]
+        case .claudeCLI:
+            let preferredDescriptor: FocusAppDescriptor? = {
+                switch target.terminalClient {
+                case .warp:
+                    return FocusAppDescriptor(bundleIdentifier: "dev.warp.Warp-Stable", appName: "Warp")
+                case .iTerm:
+                    return FocusAppDescriptor(bundleIdentifier: "com.googlecode.iterm2", appName: "iTerm")
+                case .terminal:
+                    return FocusAppDescriptor(bundleIdentifier: "com.apple.Terminal", appName: "Terminal")
+                case .wezTerm:
+                    return FocusAppDescriptor(bundleIdentifier: "com.github.wez.wezterm", appName: "WezTerm")
+                case .ghostty:
+                    return FocusAppDescriptor(bundleIdentifier: "com.mitchellh.ghostty", appName: "Ghostty")
+                case .alacritty:
+                    return FocusAppDescriptor(bundleIdentifier: "org.alacritty", appName: "Alacritty")
+                case .unknown, .none:
+                    return nil
+                }
+            }()
+
+            let fallbackDescriptors = [
+                FocusAppDescriptor(bundleIdentifier: "com.apple.Terminal", appName: "Terminal"),
+                FocusAppDescriptor(bundleIdentifier: "com.googlecode.iterm2", appName: "iTerm"),
+                FocusAppDescriptor(bundleIdentifier: "dev.warp.Warp-Stable", appName: "Warp"),
+                FocusAppDescriptor(bundleIdentifier: "com.github.wez.wezterm", appName: "WezTerm"),
+                FocusAppDescriptor(bundleIdentifier: "com.mitchellh.ghostty", appName: "Ghostty"),
+                FocusAppDescriptor(bundleIdentifier: "org.alacritty", appName: "Alacritty")
+            ]
+
+            if let preferredDescriptor {
+                return [preferredDescriptor] + fallbackDescriptors.filter { $0 != preferredDescriptor }
+            }
+
+            return fallbackDescriptors
         case .codexDesktop:
             return [
                 FocusAppDescriptor(bundleIdentifier: "com.openai.codex", appName: "Codex"),

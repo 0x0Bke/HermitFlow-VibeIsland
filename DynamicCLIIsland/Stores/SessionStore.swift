@@ -1,10 +1,12 @@
 import Foundation
 
 final class SessionStore {
+    private let panelVisibilityThreshold: TimeInterval = 60 * 60
     private(set) var sessions: [AgentSessionSnapshot] = []
 
     func apply(activitySnapshot: ActivitySourceSnapshot) -> IslandRuntimeState {
-        sessions = sortedSessions(activitySnapshot.sessions)
+        let visibleSessions = filterPanelVisibleSessions(activitySnapshot.sessions)
+        sessions = sortedSessions(visibleSessions)
 
         return IslandRuntimeState(
             sessions: sessions,
@@ -50,6 +52,10 @@ final class SessionStore {
             errorMessage: errorMessage,
             approvalRequest: nil
         )
+    }
+
+    private func filterPanelVisibleSessions(_ sessions: [AgentSessionSnapshot], now: Date = .now) -> [AgentSessionSnapshot] {
+        sessions.filter { now.timeIntervalSince($0.updatedAt) <= panelVisibilityThreshold }
     }
 
     private func sortedSessions(_ sessions: [AgentSessionSnapshot]) -> [AgentSessionSnapshot] {

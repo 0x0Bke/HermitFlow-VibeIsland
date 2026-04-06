@@ -90,6 +90,8 @@ enum SessionOrigin: String, Hashable {
 }
 
 enum FocusClientOrigin: String, Hashable {
+    case claudeCLI
+    case claudeVSCode
     case codexDesktop
     case codexCLI
     case codexVSCode
@@ -97,6 +99,10 @@ enum FocusClientOrigin: String, Hashable {
 
     var displayName: String {
         switch self {
+        case .claudeCLI:
+            return "Claude Code"
+        case .claudeVSCode:
+            return "VS Code Claude"
         case .codexDesktop:
             return "Codex Desktop"
         case .codexCLI:
@@ -107,6 +113,11 @@ enum FocusClientOrigin: String, Hashable {
             return "Unknown Session"
         }
     }
+}
+
+enum ApprovalResolutionKind: String, Hashable {
+    case accessibilityAutomation
+    case localHTTPHook
 }
 
 enum TerminalClient: String, Hashable {
@@ -152,6 +163,8 @@ struct ApprovalRequest: Identifiable, Hashable {
     let rationale: String?
     let focusTarget: FocusTarget?
     let createdAt: Date
+    let source: SessionOrigin
+    let resolutionKind: ApprovalResolutionKind
 }
 
 struct AgentSessionSnapshot: Identifiable, Hashable {

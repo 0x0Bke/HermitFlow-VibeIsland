@@ -26,6 +26,7 @@ final class ProgressStore: ObservableObject {
     @Published private(set) var compactHeight: CGFloat = 37
     @Published private(set) var cameraHousingWidth: CGFloat = 0
     @Published private(set) var cameraHousingHeight: CGFloat = 37
+    @Published private(set) var usesExternalDisplayLayout = false
     @Published private(set) var focusTarget: FocusTarget?
     @Published private(set) var approvalRequest: ApprovalRequest?
     @Published private(set) var approvalDiagnosticMessage: String?
@@ -33,6 +34,7 @@ final class ProgressStore: ObservableObject {
     @Published private(set) var collapsedInlineApprovalID: String?
     @Published private(set) var accessibilityPermissionGranted = false
     @Published private(set) var accessibilityPromptDismissed: Bool
+    @Published private(set) var runningGlyphAnimationSuppressed = false
 
     private let compactHeightOverscan: CGFloat = 8
     private let inlineApprovalMinimumHeight: CGFloat = 240
@@ -41,6 +43,8 @@ final class ProgressStore: ObservableObject {
     private let panelHoverActivationDelay: TimeInterval = 0.2
     private let panelCollapseDelayNanoseconds: UInt64 = 180_000_000
     private let accessibilityPermissionPollInterval: TimeInterval = 1.0
+    private let externalDisplayCompactWidthMultiplier: CGFloat = 1.6
+    private let externalDisplayPanelWidthMultiplier: CGFloat = 1.2
 
     var onWindowSizeChange: ((CGSize) -> Void)?
 
@@ -50,6 +54,8 @@ final class ProgressStore: ObservableObject {
     private var hasHoveredInsidePanelSinceShown = false
     private var panelShownAt = Date.distantPast
     private var panelCollapseTask: Task<Void, Never>?
+    private var panelAutoCollapseSuppressedUntil = Date.distantPast
+    private var runningGlyphUnsuppressTask: Task<Void, Never>?
     private var localCodexRefreshInFlight = false
     private var localApprovalRefreshInFlight = false
     private var lastFileModificationDate: Date?
@@ -61,6 +67,7 @@ final class ProgressStore: ObservableObject {
     private let focusLauncher = FocusLauncher()
     private let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
     private let localCodexSource = LocalCodexSource()
+    private let localClaudeSource = LocalClaudeSource()
     private let localCodexQueue = DispatchQueue(label: "HermitFlow.localCodex", qos: .utility)
     private let localApprovalQueue = DispatchQueue(label: "HermitFlow.localApproval", qos: .userInitiated)
     private let externalProgressSource = ExternalProgressFileSource()
@@ -98,11 +105,14 @@ final class ProgressStore: ObservableObject {
     }
 
     private var islandWidth: CGFloat {
+        let baseWidth: CGFloat
         if isInlineApprovalExpanded {
-            return max(364, cameraGapWidth + 256)
+            baseWidth = max(364, cameraGapWidth + 256)
+        } else {
+            baseWidth = max(228, cameraGapWidth + 140)
         }
 
-        return max(228, cameraGapWidth + 140)
+        return scaledWidth(baseWidth, for: .island)
     }
 
     private var islandHeight: CGFloat {
@@ -114,11 +124,11 @@ final class ProgressStore: ObservableObject {
     }
 
     private var hiddenWidth: CGFloat {
-        max(cameraHousingWidth, 176)
+        scaledWidth(max(cameraHousingWidth, 176), for: .hidden)
     }
 
     private var expandedWidth: CGFloat {
-        max(608, cameraGapWidth + 420)
+        scaledWidth(max(608, cameraGapWidth + 420), for: .panel)
     }
 
     var isExpanded: Bool {
@@ -147,7 +157,7 @@ final class ProgressStore: ObservableObject {
             return nil
         }
 
-        return "自动审批需要开启“辅助功能”权限。请在“系统设置 > 隐私与安全性 > 辅助功能”中允许 HermitFlow。"
+        return "请在“系统设置 > 隐私与安全性 > 辅助功能”中允许 HermitFlow。"
     }
 
     var panelTitle: String {
@@ -203,6 +213,7 @@ final class ProgressStore: ObservableObject {
     }
 
     func handleLaunch() {
+        localClaudeSource.bootstrap()
         refreshAccessibilityPermissionStatus()
         startLocalCodexMonitoring()
     }
@@ -239,6 +250,14 @@ final class ProgressStore: ObservableObject {
         setDisplayMode(.panel)
     }
 
+    func collapsePanel() {
+        guard displayMode == .panel else {
+            return
+        }
+
+        setDisplayMode(.island)
+    }
+
     func showHidden() {
         setDisplayMode(.hidden)
     }
@@ -252,26 +271,6 @@ final class ProgressStore: ObservableObject {
             panelCollapseTask?.cancel()
             panelCollapseTask = nil
             hasHoveredInsidePanelSinceShown = true
-            return
-        }
-
-        guard hasHoveredInsidePanelSinceShown else {
-            return
-        }
-
-        guard Date().timeIntervalSince(panelShownAt) >= panelHoverActivationDelay else {
-            return
-        }
-
-        panelCollapseTask?.cancel()
-        let collapseDelay = panelCollapseDelayNanoseconds
-        panelCollapseTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: collapseDelay)
-            guard !Task.isCancelled else {
-                return
-            }
-
-            self?.collapsePanelAfterHoverExit()
         }
     }
 
@@ -282,6 +281,17 @@ final class ProgressStore: ObservableObject {
 
         panelCollapseTask?.cancel()
         panelCollapseTask = nil
+        hasHoveredInsidePanelSinceShown = true
+    }
+
+    func suppressPanelAutoCollapse(for duration: TimeInterval) {
+        guard displayMode == .panel else {
+            return
+        }
+
+        panelCollapseTask?.cancel()
+        panelCollapseTask = nil
+        panelAutoCollapseSuppressedUntil = Date().addingTimeInterval(duration)
         hasHoveredInsidePanelSinceShown = true
     }
 
@@ -299,15 +309,6 @@ final class ProgressStore: ObservableObject {
 
         displayMode = mode
     }
-
-    private func collapsePanelAfterHoverExit() {
-        guard displayMode == .panel else {
-            return
-        }
-
-        setDisplayMode(.island)
-    }
-
     func quitApp() {
         NSApp.terminate(nil)
     }
@@ -346,6 +347,13 @@ final class ProgressStore: ObservableObject {
 
         statusMessage = "已打开辅助功能设置"
         beginAccessibilityPermissionPolling()
+    }
+
+    func resyncClaudeHooks() {
+        statusMessage = "Resyncing Claude hooks"
+        localClaudeSource.resyncHooks()
+        refreshLocalCodexStatus()
+        refreshLocalApprovalStatus()
     }
 
     func dismissAccessibilityPrompt() {
@@ -399,6 +407,22 @@ final class ProgressStore: ObservableObject {
     }
 
     private func performApproval(_ decision: ApprovalDecision, request: ApprovalRequest) {
+        collapseApprovalPresentation(for: request)
+
+        if request.resolutionKind == .localHTTPHook {
+            errorMessage = nil
+
+            if localClaudeSource.resolveApproval(id: request.id, decision: decision) {
+                approvalDiagnosticMessage = nil
+                statusMessage = "\(decision.progressMessage)：Claude Code 已收到审批结果"
+                approvalStore.clear()
+                resolvePresentationState()
+            } else {
+                errorMessage = "Approval request expired"
+            }
+            return
+        }
+
         guard let target = request.focusTarget else {
             errorMessage = "No focus target available"
             approvalDiagnosticMessage = "没有可用的目标窗口，无法自动审批。"
@@ -437,6 +461,38 @@ final class ProgressStore: ObservableObject {
         guard focusLauncher.bringToFront(target) else {
             errorMessage = "Unable to locate \(target.displayName)"
             return
+        }
+    }
+
+    private func collapseApprovalPresentation(for request: ApprovalRequest) {
+        collapsedInlineApprovalID = request.id
+        approvalDiagnosticMessage = nil
+        suppressRunningGlyphAnimation(for: 0.45)
+
+        if displayMode == .panel {
+            setDisplayMode(.island)
+            return
+        }
+
+        if displayMode == .island {
+            onWindowSizeChange?(windowSize)
+            return
+        }
+
+        setDisplayMode(.island)
+    }
+
+    private func suppressRunningGlyphAnimation(for duration: TimeInterval) {
+        runningGlyphUnsuppressTask?.cancel()
+        runningGlyphAnimationSuppressed = true
+
+        runningGlyphUnsuppressTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.runningGlyphAnimationSuppressed = false
         }
     }
 
@@ -501,6 +557,60 @@ final class ProgressStore: ObservableObject {
         }
 
         onWindowSizeChange?(windowSize)
+    }
+
+    func syncCameraHousingMetrics(width: CGFloat, height: CGFloat) {
+        let normalizedWidth = max(width.rounded(.up), 0)
+        let normalizedHousingHeight = min(max(height.rounded(.up), 28), 64)
+        let normalizedCompactHeight = min(max((normalizedHousingHeight + compactHeightOverscan).rounded(.up), 28), 64)
+
+        var didChange = false
+
+        if abs(cameraHousingHeight - normalizedHousingHeight) > 0.5 {
+            cameraHousingHeight = normalizedHousingHeight
+            didChange = true
+        }
+
+        if abs(compactHeight - normalizedCompactHeight) > 0.5 {
+            compactHeight = normalizedCompactHeight
+            didChange = true
+        }
+
+        if abs(cameraHousingWidth - normalizedWidth) > 0.5 {
+            cameraHousingWidth = normalizedWidth
+            didChange = true
+        }
+
+        guard didChange, displayMode != .panel else {
+            return
+        }
+
+        onWindowSizeChange?(windowSize)
+    }
+
+    func updateDisplayLayout(isExternal: Bool) {
+        guard usesExternalDisplayLayout != isExternal else {
+            return
+        }
+
+        usesExternalDisplayLayout = isExternal
+        onWindowSizeChange?(windowSize)
+    }
+
+    private func scaledWidth(_ width: CGFloat, for mode: DisplayMode) -> CGFloat {
+        let multiplier: CGFloat
+        if usesExternalDisplayLayout {
+            switch mode {
+            case .panel:
+                multiplier = externalDisplayPanelWidthMultiplier
+            case .hidden, .island:
+                multiplier = externalDisplayCompactWidthMultiplier
+            }
+        } else {
+            multiplier = 1
+        }
+
+        return (width * multiplier).rounded(.up)
     }
 
     func updateCameraHousingWidth(_ width: CGFloat) {
@@ -644,8 +754,11 @@ final class ProgressStore: ObservableObject {
 
         localCodexRefreshInFlight = true
         let source = localCodexSource
+        let claudeSource = localClaudeSource
         localCodexQueue.async { [weak self] in
-            let snapshot = source.fetchActivity()
+            let codexSnapshot = source.fetchActivity()
+            let claudeSnapshot = claudeSource.fetchActivity()
+            let snapshot = Self.mergeActivitySnapshots(codexSnapshot, claudeSnapshot)
 
             Task { @MainActor [weak self] in
                 guard let self else {
@@ -669,8 +782,12 @@ final class ProgressStore: ObservableObject {
 
         localApprovalRefreshInFlight = true
         let source = localCodexSource
+        let claudeSource = localClaudeSource
         localApprovalQueue.async { [weak self] in
-            let approvalRequest = source.fetchLatestApprovalRequest()
+            let approvalRequest = Self.mergeApprovalRequests(
+                source.fetchLatestApprovalRequest(),
+                claudeSource.fetchLatestApprovalRequest()
+            )
 
             Task { @MainActor [weak self] in
                 guard let self else {
@@ -771,7 +888,76 @@ final class ProgressStore: ObservableObject {
             commandSummary: "open -a Calculator",
             rationale: "Preview approval UI in island mode without waiting for a real pending request.",
             focusTarget: previewTarget,
-            createdAt: .now
+            createdAt: .now,
+            source: .generic,
+            resolutionKind: .accessibilityAutomation
         )
+    }
+
+    nonisolated private static func mergeActivitySnapshots(
+        _ lhs: ActivitySourceSnapshot,
+        _ rhs: ActivitySourceSnapshot
+    ) -> ActivitySourceSnapshot {
+        let sessions = (lhs.sessions + rhs.sessions).sorted { left, right in
+            if left.activityState != right.activityState {
+                return priority(for: left.activityState) > priority(for: right.activityState)
+            }
+            return left.updatedAt > right.updatedAt
+        }
+
+        let statusMessage: String
+        if !lhs.sessions.isEmpty, !rhs.sessions.isEmpty {
+            statusMessage = "Watching local Codex + Claude Code activity"
+        } else if !lhs.sessions.isEmpty {
+            statusMessage = lhs.statusMessage
+        } else if !rhs.sessions.isEmpty {
+            statusMessage = rhs.statusMessage
+        } else {
+            statusMessage = "Waiting for Codex / Claude activity"
+        }
+
+        let lastUpdatedAt = max(lhs.lastUpdatedAt, rhs.lastUpdatedAt)
+        let approvalRequest = mergeApprovalRequests(lhs.approvalRequest, rhs.approvalRequest)
+        let errorMessage = [lhs.errorMessage, rhs.errorMessage]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+
+        return ActivitySourceSnapshot(
+            sessions: sessions,
+            statusMessage: statusMessage,
+            lastUpdatedAt: lastUpdatedAt,
+            errorMessage: errorMessage.isEmpty ? nil : errorMessage,
+            approvalRequest: approvalRequest
+        )
+    }
+
+    nonisolated private static func mergeApprovalRequests(
+        _ lhs: ApprovalRequest?,
+        _ rhs: ApprovalRequest?
+    ) -> ApprovalRequest? {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            return left.createdAt >= right.createdAt ? left : right
+        case let (left?, nil):
+            return left
+        case let (nil, right?):
+            return right
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    nonisolated private static func priority(for state: IslandCodexActivityState) -> Int {
+        switch state {
+        case .failure:
+            return 3
+        case .running:
+            return 2
+        case .success:
+            return 1
+        case .idle:
+            return 0
+        }
     }
 }

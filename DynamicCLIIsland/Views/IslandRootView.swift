@@ -5,7 +5,7 @@ struct IslandRootView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ZStack {
+            ZStack(alignment: .top) {
                 islandShape
                     .fill(backgroundFill)
                     .overlay(
@@ -24,6 +24,10 @@ struct IslandRootView: View {
                         EmptyView()
                     }
                 }
+                .animation(nil, value: store.displayMode)
+                .animation(nil, value: store.hasInlineApprovalIsland)
+                .animation(nil, value: store.approvalRequest?.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 if store.displayMode != .panel && !store.hasInlineApprovalIsland {
                     Color.clear
@@ -68,45 +72,20 @@ struct IslandRootView: View {
     }
 
     private var compactBody: some View {
-        HStack(spacing: 0) {
-            HStack {
-                compactBrandIcon
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            cameraGapSpacer
-
-            HStack {
-                Spacer(minLength: 0)
-                compactStatusIcon
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(.horizontal, 36)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        islandHeader
+            .frame(width: store.windowSize.width, height: store.windowSize.height, alignment: .center)
     }
+
+    private var compactHorizontalPadding: CGFloat { 36 }
+
+    private var railWidth: CGFloat {
+        max((store.windowSize.width - store.cameraGapWidth - compactHorizontalPadding * 2) / 2, 0)
+    }
+
 
     private func inlineApprovalBody(_ request: ApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 0) {
-                HStack {
-                    compactBrandIcon
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                cameraGapSpacer
-
-                HStack {
-                    Spacer(minLength: 0)
-                    compactStatusIcon
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .padding(.horizontal, 36)
-            .contentShape(Rectangle())
-            .gesture(primaryClickGesture)
+            islandHeader
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 8) {
@@ -165,6 +144,29 @@ struct IslandRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var islandHeader: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                compactBrandIcon
+                    .frame(width: railWidth, alignment: .leading)
+
+                cameraGapSpacer
+
+                Color.clear
+                    .frame(width: railWidth)
+            }
+        }
+        .padding(.horizontal, compactHorizontalPadding)
+        .frame(height: store.compactHeight)
+        .overlay(alignment: .trailing) {
+            compactStatusIcon
+                .frame(width: 18, height: 18)
+                .padding(.trailing, compactHorizontalPadding)
+        }
+        .contentShape(Rectangle())
+        .gesture(primaryClickGesture)
+    }
+
     private var expandedBody: some View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
@@ -172,6 +174,10 @@ struct IslandRootView: View {
 
                 if let accessibilityPermissionMessage = store.accessibilityPermissionMessage {
                     accessibilityPermissionCard(message: accessibilityPermissionMessage)
+                }
+
+                if let errorMessage = store.errorMessage {
+                    errorCard(message: errorMessage)
                 }
 
                 if let approvalRequest = store.approvalRequest {
@@ -214,9 +220,13 @@ struct IslandRootView: View {
         case .idle:
             IdleStatusGlyph()
         case .running:
-            RunningStatusGlyph()
+            if store.runningGlyphAnimationSuppressed {
+                StaticRunningStatusGlyph()
+            } else {
+                RunningStatusGlyph()
+            }
         case .success:
-            SolidStatusGlyph(fill: Color(red: 73 / 255, green: 170 / 255, blue: 25 / 255), symbol: "checkmark")
+            SolidStatusGlyph(fill: Color(red: 96 / 255, green: 214 / 255, blue: 55 / 255), symbol: "checkmark")
         case .failure:
             SolidStatusGlyph(fill: Color(red: 220 / 255, green: 68 / 255, blue: 70 / 255), symbol: "xmark")
         }
@@ -248,34 +258,17 @@ struct IslandRootView: View {
 
 private extension IslandRootView {
     var panelHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 12) {
-                compactBrandIcon
-                    .frame(width: 22, height: 22)
+        HStack(alignment: .center, spacing: 12) {
+            compactBrandIcon
+                .frame(width: 22, height: 22)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.panelTitle)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
+            Text(store.panelTitle)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
 
-                    Text(store.panelSubtitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.62))
-                        .lineLimit(1)
-                }
+            Spacer(minLength: 12)
 
-                Spacer(minLength: 12)
-
-                compactStatusIcon
-            }
-
-            HStack(spacing: 8) {
-                panelPill(title: store.sourceLabel)
-
-                if let focusTargetLabel = store.focusTargetLabel {
-                    panelPill(title: focusTargetLabel)
-                }
-            }
+            compactStatusIcon
         }
     }
 
@@ -325,7 +318,7 @@ private extension IslandRootView {
                 }
             }
 
-            Text("Awaiting action in Codex. Return to the active session to allow, deny, or allow all.")
+            Text("Awaiting action in the active CLI session. Return to Claude Code or Codex to allow, deny, or allow all.")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.56))
                 .fixedSize(horizontal: false, vertical: true)
@@ -364,11 +357,6 @@ private extension IslandRootView {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-
-                    Text(session.detail)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(Color.white.opacity(0.6))
-                        .lineLimit(2)
                 }
 
                 Spacer(minLength: 10)
@@ -425,7 +413,7 @@ private extension IslandRootView {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("The island is ready to show Codex activity, approval requests, and focus targets when new work starts.")
+            Text("The island is ready to show Claude Code and Codex activity, approval requests, and focus targets when new work starts.")
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
@@ -444,6 +432,37 @@ private extension IslandRootView {
 
     func accessibilityPermissionCard(message: String) -> some View {
         accessibilityPermissionCallout(message: message, compact: false)
+    }
+
+    func errorCard(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Diagnostic")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Spacer(minLength: 8)
+
+                panelActionButton(title: "Resync Claude Hooks") {
+                    store.resyncClaudeHooks()
+                }
+            }
+
+            Text(message)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(red: 0.34, green: 0.11, blue: 0.10).opacity(0.58))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color(red: 0.95, green: 0.49, blue: 0.45).opacity(0.34), lineWidth: 1)
+        )
     }
 
     func panelPill(title: String, tone: PanelPillTone = .neutral) -> some View {
@@ -530,7 +549,7 @@ private extension IslandRootView {
     func accessibilityPermissionCallout(message: String, compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             HStack(alignment: .center, spacing: 8) {
-                Text("需要辅助功能权限")
+                Text("Codex CLI 自动审批需要辅助功能权限")
                     .font(.system(size: compact ? 11 : 13, weight: .semibold))
                     .foregroundStyle(.white)
 
@@ -719,25 +738,45 @@ private struct IdleStatusGlyph: View {
 
 private struct RunningStatusGlyph: View {
     @State private var isAnimating = false
+    private let accentColor = Color(red: 50 / 255, green: 150 / 255, blue: 1.0)
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color(red: 22 / 255, green: 104 / 255, blue: 220 / 255).opacity(0.22), lineWidth: 1.8)
+                .stroke(accentColor.opacity(0.24), lineWidth: 2.2)
 
             Circle()
                 .trim(from: 0.12, to: 0.72)
                 .stroke(
-                    Color(red: 22 / 255, green: 104 / 255, blue: 220 / 255),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    accentColor,
+                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
                 )
                 .rotationEffect(.degrees(isAnimating ? 360 : 0))
-                .animation(.linear(duration: 0.95).repeatForever(autoreverses: false), value: isAnimating)
         }
         .frame(width: 15, height: 15)
+        .animation(.linear(duration: 0.95).repeatForever(autoreverses: false), value: isAnimating)
         .onAppear {
             isAnimating = true
         }
+    }
+}
+
+private struct StaticRunningStatusGlyph: View {
+    private let accentColor = Color(red: 50 / 255, green: 150 / 255, blue: 1.0)
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(accentColor.opacity(0.24), lineWidth: 2.2)
+
+            Circle()
+                .trim(from: 0.12, to: 0.72)
+                .stroke(
+                    accentColor,
+                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
+                )
+        }
+        .frame(width: 15, height: 15)
     }
 }
 
