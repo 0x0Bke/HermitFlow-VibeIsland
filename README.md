@@ -27,6 +27,24 @@ Together, the name describes AI and task flows that live inside the system and k
 - `Codex CLI` approvals can be executed through macOS Accessibility automation
 - `Claude Code` is integrated through local hooks, with approvals resolved through a local HTTP callback
 
+## Showcase
+
+### Idle
+
+![HermitFlow idle state](docs/images/idle.png)
+
+### Running
+
+![HermitFlow running state](docs/images/running.png)
+
+### Approval Request
+
+![HermitFlow approval request](docs/images/approval.png)
+
+### Approval Success
+
+![HermitFlow approval success](docs/images/success.png)
+
 ## How It Works
 
 ### Codex
