@@ -88,7 +88,7 @@ final class ProgressStore: ObservableObject {
     var windowSize: CGSize {
         switch displayMode {
         case .panel:
-            return CGSize(width: expandedWidth, height: 278)
+            return CGSize(width: expandedWidth, height: panelHeight)
         case .island:
             return CGSize(width: islandWidth, height: islandHeight)
         case .hidden:
@@ -128,7 +128,15 @@ final class ProgressStore: ObservableObject {
     }
 
     private var expandedWidth: CGFloat {
-        scaledWidth(max(608, cameraGapWidth + 420), for: .panel)
+        scaledWidth(max(420, cameraGapWidth + 279), for: .panel)
+    }
+
+    private var panelHeight: CGFloat {
+        panelUsageProviderCount <= 1 ? 252 : 278
+    }
+
+    private var panelUsageProviderCount: Int {
+        Set(sessions.map(\.origin)).count
     }
 
     var isExpanded: Bool {

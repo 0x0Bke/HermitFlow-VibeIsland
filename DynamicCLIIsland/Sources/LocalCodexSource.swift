@@ -60,6 +60,7 @@ struct LocalCodexSource: @unchecked Sendable {
             let sessionFileURL = fetchSessionFileURL(for: threadSnapshot.threadID)
             let sessionMeta = sessionFileURL.flatMap(fetchSessionMeta(from:))
             let sessionHints = sessionFileURL.flatMap(fetchSessionActivityHints(from:))
+            let conversationSummary = sessionFileURL.flatMap(fetchConversationSummary(from:))
             let terminalClient = detectTerminalClient(for: threadSnapshot.threadID)
             let resolvedCWD = resolvedWorkingDirectory(sessionMeta: sessionMeta, threadSnapshot: threadSnapshot)
             let hasActiveWorkspaceMatch = hasActiveWorkspaceMatch(cwd: resolvedCWD, globalState: globalState)
@@ -130,7 +131,7 @@ struct LocalCodexSource: @unchecked Sendable {
                 AgentSessionSnapshot(
                     id: threadSnapshot.threadID,
                     origin: .codex,
-                    title: sessionTitle(
+                    title: conversationSummary ?? sessionTitle(
                         sessionMeta: sessionMeta,
                         fallbackSource: threadSnapshot.threadSource,
                         terminalClient: terminalClient,
@@ -449,6 +450,60 @@ struct LocalCodexSource: @unchecked Sendable {
         }
 
         return trimmedText.split(separator: "\n", omittingEmptySubsequences: true)
+    }
+
+    private func fetchConversationSummary(from fileURL: URL) -> String? {
+        for line in readRecentLines(from: fileURL, maxBytes: recentSessionScanBytes).reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = jsonObject["type"] as? String,
+                  type == "response_item",
+                  let payload = jsonObject["payload"] as? [String: Any],
+                  let payloadType = payload["type"] as? String,
+                  payloadType == "message",
+                  let role = payload["role"] as? String,
+                  role == "user",
+                  let content = payload["content"] as? [[String: Any]]
+            else {
+                continue
+            }
+
+            for item in content {
+                guard let itemType = item["type"] as? String,
+                      itemType == "input_text",
+                      let text = item["text"] as? String,
+                      let summary = summarizeConversationText(text) else {
+                    continue
+                }
+
+                return summary
+            }
+        }
+
+        return nil
+    }
+
+    private func summarizeConversationText(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("<environment_context>") else {
+            return nil
+        }
+
+        let singleLine = trimmed
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !singleLine.isEmpty else {
+            return nil
+        }
+
+        if singleLine.count <= 72 {
+            return singleLine
+        }
+
+        return String(singleLine.prefix(72)) + "..."
     }
 
     private func makeFocusTarget(
@@ -1158,6 +1213,8 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private let hookScriptName = "hermit-claude-hook.js"
     private let hookMarker = "hermit-claude-hook.js"
     private let permissionHookPath = "/permission/hermitflow"
+    private let claudeHistoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/history.jsonl")
+    private let recentHistoryScanBytes = 512 * 1024
 
     private var listener: NWListener?
     private var sessions: [String: ClaudeTrackedSession] = [:]
@@ -1394,6 +1451,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 rawSessionID: sessionID,
                 cwd: existing?.cwd ?? "",
                 source: existing?.source ?? payload.toolName,
+                conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(for: sessionID),
                 status: .running,
                 lastEvent: "PermissionRequest",
                 lastActivityAt: .now
@@ -1457,14 +1515,23 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             lhs.lastActivityAt > rhs.lastActivityAt
         }.map { session in
             let resolvedStatus = resolvedStatus(for: session, now: .now)
+            let refreshedSession = ClaudeTrackedSession(
+                rawSessionID: session.rawSessionID,
+                cwd: session.cwd,
+                source: session.source,
+                conversationSummary: session.conversationSummary ?? fetchClaudeConversationSummary(for: session.rawSessionID),
+                status: session.status,
+                lastEvent: session.lastEvent,
+                lastActivityAt: session.lastActivityAt
+            )
             return AgentSessionSnapshot(
-                id: "claude:\(session.rawSessionID)",
+                id: "claude:\(refreshedSession.rawSessionID)",
                 origin: .claude,
-                title: session.title,
-                detail: session.detail,
+                title: refreshedSession.title,
+                detail: refreshedSession.detail,
                 activityState: resolvedStatus.activityState,
-                updatedAt: session.lastActivityAt,
-                cwd: session.cwd.isEmpty ? nil : session.cwd,
+                updatedAt: refreshedSession.lastActivityAt,
+                cwd: refreshedSession.cwd.isEmpty ? nil : refreshedSession.cwd,
                 focusTarget: nil,
                 freshness: .live
             )
@@ -1486,6 +1553,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 rawSessionID: existing.rawSessionID,
                 cwd: payload.cwd.isEmpty ? existing.cwd : payload.cwd,
                 source: payload.source.isEmpty ? existing.source : payload.source,
+                conversationSummary: existing.conversationSummary,
                 status: .idle,
                 lastEvent: existing.lastEvent,
                 lastActivityAt: existing.lastActivityAt
@@ -1501,6 +1569,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 rawSessionID: existing.rawSessionID,
                 cwd: payload.cwd.isEmpty ? existing.cwd : payload.cwd,
                 source: payload.source.isEmpty ? existing.source : payload.source,
+                conversationSummary: existing.conversationSummary,
                 status: existing.status,
                 lastEvent: existing.lastEvent,
                 lastActivityAt: existing.lastActivityAt
@@ -1511,10 +1580,88 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             rawSessionID: existing?.rawSessionID ?? payload.sessionID,
             cwd: payload.cwd.isEmpty ? existing?.cwd ?? "" : payload.cwd,
             source: payload.source.isEmpty ? existing?.source ?? "" : payload.source,
+            conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(for: payload.sessionID),
             status: incomingStatus,
             lastEvent: payload.event,
             lastActivityAt: now
         )
+    }
+
+    private func fetchClaudeConversationSummary(for sessionID: String) -> String? {
+        guard !sessionID.isEmpty else {
+            return nil
+        }
+
+        for line in readRecentLines(from: claudeHistoryURL, maxBytes: recentHistoryScanBytes).reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let entry = try? JSONDecoder().decode(ClaudeHistoryEntry.self, from: data),
+                  entry.sessionID == sessionID,
+                  let summary = summarizeConversationText(entry.display) else {
+                continue
+            }
+
+            return summary
+        }
+
+        return nil
+    }
+
+    private func readRecentLines(from fileURL: URL, maxBytes: Int) -> [Substring] {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let fileSize = attributes[.size] as? NSNumber,
+              let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return []
+        }
+
+        defer {
+            try? handle.close()
+        }
+
+        let byteCount = UInt64(max(1, maxBytes))
+        let startOffset = fileSize.uint64Value > byteCount ? fileSize.uint64Value - byteCount : 0
+
+        do {
+            try handle.seek(toOffset: startOffset)
+        } catch {
+            return []
+        }
+
+        guard let data = try? handle.readToEnd(), !data.isEmpty,
+              let text = String(data: data, encoding: .utf8) else {
+            return []
+        }
+
+        let trimmedText: Substring
+        if startOffset > 0, let newlineIndex = text.firstIndex(of: "\n") {
+            trimmedText = text[text.index(after: newlineIndex)...]
+        } else {
+            trimmedText = text[...]
+        }
+
+        return trimmedText.split(separator: "\n", omittingEmptySubsequences: true)
+    }
+
+    private func summarizeConversationText(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("<environment_context>") else {
+            return nil
+        }
+
+        let singleLine = trimmed
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !singleLine.isEmpty else {
+            return nil
+        }
+
+        if singleLine.count <= 72 {
+            return singleLine
+        }
+
+        return String(singleLine.prefix(72)) + "..."
     }
 
     private func resolvedStatus(for session: ClaudeTrackedSession, now: Date) -> ClaudeTrackedSession.Status {
@@ -2097,12 +2244,17 @@ private struct ClaudeTrackedSession {
     let rawSessionID: String
     let cwd: String
     let source: String
+    let conversationSummary: String?
     let status: Status
     let lastEvent: String
     let lastActivityAt: Date
 
     var title: String {
-        "Claude Code"
+        if let conversationSummary, !conversationSummary.isEmpty {
+            return conversationSummary
+        }
+
+        return "Claude Code"
     }
 
     var detail: String {
@@ -2224,5 +2376,15 @@ private struct ClaudeHookPermissionPayload: Decodable {
         case toolName = "tool_name"
         case toolInput = "tool_input"
         case permissionSuggestions = "permission_suggestions"
+    }
+}
+
+private struct ClaudeHistoryEntry: Decodable {
+    let display: String
+    let sessionID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case display
+        case sessionID = "sessionId"
     }
 }
