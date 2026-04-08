@@ -1,6 +1,7 @@
 .DS_Store
 .DerivedData/
 DerivedData/
+.DerivedDataLocal/
 .DerivedDataPackage/
 .DerivedDataRelease/
 .swift-module-cache/
