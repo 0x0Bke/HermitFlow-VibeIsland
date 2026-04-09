@@ -36,6 +36,7 @@ final class ProgressStore: ObservableObject {
     @Published private(set) var accessibilityPromptDismissed: Bool
     @Published private(set) var runningGlyphAnimationSuppressed = false
     @Published private(set) var isSoundMuted: Bool
+    @Published private(set) var usageSnapshots: [ProviderUsageSnapshot] = []
 
     private let compactHeightOverscan: CGFloat = 2.5
     private let inlineApprovalMinimumHeight: CGFloat = 300
@@ -839,7 +840,8 @@ final class ProgressStore: ObservableObject {
             statusMessage: "Waiting for CLI status",
             lastUpdatedAt: .now,
             errorMessage: nil,
-            approvalRequest: nil
+            approvalRequest: nil,
+            usageSnapshots: []
         )
         switch sourceMode {
         case .localCodex:
@@ -889,6 +891,7 @@ final class ProgressStore: ObservableObject {
         errorMessage = runtimeState.errorMessage?.isEmpty == true ? nil : runtimeState.errorMessage
         approvalRequest = resolvedApprovalRequest
         focusTarget = resolvedFocusTarget
+        usageSnapshots = runtimeState.usageSnapshots
 
         let shouldPlayApprovalSound = !approvalPreviewEnabled
             && resolvedApprovalRequest?.id != nil
@@ -987,7 +990,8 @@ final class ProgressStore: ObservableObject {
             statusMessage: statusMessage,
             lastUpdatedAt: lastUpdatedAt,
             errorMessage: errorMessage.isEmpty ? nil : errorMessage,
-            approvalRequest: approvalRequest
+            approvalRequest: approvalRequest,
+            usageSnapshots: mergeUsageSnapshots(lhs.usageSnapshots, rhs.usageSnapshots)
         )
     }
 
@@ -1005,6 +1009,23 @@ final class ProgressStore: ObservableObject {
         case (nil, nil):
             return nil
         }
+    }
+
+    nonisolated private static func mergeUsageSnapshots(
+        _ lhs: [ProviderUsageSnapshot],
+        _ rhs: [ProviderUsageSnapshot]
+    ) -> [ProviderUsageSnapshot] {
+        let merged = lhs + rhs
+        var bestByOrigin: [SessionOrigin: ProviderUsageSnapshot] = [:]
+
+        for snapshot in merged {
+            if let existing = bestByOrigin[snapshot.origin], existing.updatedAt >= snapshot.updatedAt {
+                continue
+            }
+            bestByOrigin[snapshot.origin] = snapshot
+        }
+
+        return bestByOrigin.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     nonisolated private static func priority(for state: IslandCodexActivityState) -> Int {

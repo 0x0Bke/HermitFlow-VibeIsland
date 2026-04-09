@@ -15,7 +15,8 @@ final class SessionStore {
             statusMessage: activitySnapshot.statusMessage,
             lastUpdatedAt: activitySnapshot.lastUpdatedAt,
             errorMessage: activitySnapshot.errorMessage,
-            approvalRequest: activitySnapshot.approvalRequest
+            approvalRequest: activitySnapshot.approvalRequest,
+            usageSnapshots: activitySnapshot.usageSnapshots
         )
     }
 
@@ -36,7 +37,8 @@ final class SessionStore {
             statusMessage: sourceLabel,
             lastUpdatedAt: progressEnvelope.generatedAt,
             errorMessage: errorMessage,
-            approvalRequest: nil
+            approvalRequest: nil,
+            usageSnapshots: []
         )
     }
 
@@ -50,7 +52,8 @@ final class SessionStore {
             statusMessage: statusMessage,
             lastUpdatedAt: lastUpdatedAt,
             errorMessage: errorMessage,
-            approvalRequest: nil
+            approvalRequest: nil,
+            usageSnapshots: []
         )
     }
 

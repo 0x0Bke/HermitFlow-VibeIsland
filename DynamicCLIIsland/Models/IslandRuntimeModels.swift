@@ -185,6 +185,7 @@ struct ActivitySourceSnapshot {
     let lastUpdatedAt: Date
     let errorMessage: String?
     let approvalRequest: ApprovalRequest?
+    let usageSnapshots: [ProviderUsageSnapshot]
 }
 
 struct IslandRuntimeState {
@@ -195,4 +196,14 @@ struct IslandRuntimeState {
     let lastUpdatedAt: Date
     let errorMessage: String?
     let approvalRequest: ApprovalRequest?
+    let usageSnapshots: [ProviderUsageSnapshot]
+}
+
+struct ProviderUsageSnapshot: Hashable, Identifiable {
+    let origin: SessionOrigin
+    let shortWindowRemaining: Double
+    let longWindowRemaining: Double
+    let updatedAt: Date
+
+    var id: SessionOrigin { origin }
 }

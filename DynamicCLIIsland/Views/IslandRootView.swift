@@ -916,30 +916,20 @@ private extension IslandRootView {
     }
 
     var providerUsageRows: [ProviderUsageRow] {
-        let grouped = Dictionary(grouping: store.sessions, by: \.origin)
         let preferredOrder: [SessionOrigin] = [.claude, .codex, .generic]
+        let usageByOrigin = Dictionary(uniqueKeysWithValues: store.usageSnapshots.map { ($0.origin, $0) })
 
         return preferredOrder.compactMap { origin in
-            guard let sessions = grouped[origin], !sessions.isEmpty else {
+            guard let snapshot = usageByOrigin[origin] else {
                 return nil
             }
 
             return ProviderUsageRow(
                 origin: origin,
-                shortWindow: activityShare(for: sessions, recentInterval: 5 * 60 * 60),
-                longWindow: activityShare(for: sessions, recentInterval: 7 * 24 * 60 * 60)
+                shortWindow: snapshot.shortWindowRemaining,
+                longWindow: snapshot.longWindowRemaining
             )
         }
-    }
-
-    func activityShare(for sessions: [AgentSessionSnapshot], recentInterval: TimeInterval) -> Double {
-        let now = Date()
-        let recentCount = sessions.filter { now.timeIntervalSince($0.updatedAt) <= recentInterval }.count
-        guard !sessions.isEmpty else {
-            return 0
-        }
-
-        return Double(recentCount) / Double(sessions.count)
     }
 
     func usageRow(_ row: ProviderUsageRow) -> some View {
