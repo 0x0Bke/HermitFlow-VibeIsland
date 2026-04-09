@@ -14,6 +14,11 @@ final class ApprovalStore {
             return
         }
 
+        if currentRequest?.source == .claude {
+            clear()
+            return
+        }
+
         guard
             currentRequest != nil,
             let lastObservedAt,

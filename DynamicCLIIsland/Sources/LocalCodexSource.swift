@@ -1399,12 +1399,6 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
             if payload.event == "SessionEnd" {
                 sessions.removeValue(forKey: sessionID)
-                approvalOrder = approvalOrder.filter { approvalID in
-                    approvals[approvalID]?.sessionID != sessionID
-                }
-                approvals = approvals.filter { _, approval in
-                    approval.sessionID != sessionID
-                }
             } else {
                 let now = Date()
                 sessions[sessionID] = mergedClaudeSession(
@@ -1413,6 +1407,9 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                     now: now
                 )
             }
+            // Once Claude emits a state event for the session, any previous
+            // permission prompt has already been resolved in the CLI.
+            clearApprovals(forSessionID: sessionID)
             lastErrorMessage = nil
         }
 
@@ -1468,6 +1465,15 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 approvals.removeValue(forKey: id)
                 approvalOrder.removeAll { $0 == id }
             }
+        }
+    }
+
+    private func clearApprovals(forSessionID sessionID: String) {
+        approvalOrder = approvalOrder.filter { approvalID in
+            approvals[approvalID]?.sessionID != sessionID
+        }
+        approvals = approvals.filter { _, approval in
+            approval.sessionID != sessionID
         }
     }
 

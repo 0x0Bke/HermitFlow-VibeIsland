@@ -878,6 +878,9 @@ final class ProgressStore: ObservableObject {
                 approvalDiagnosticMessage = nil
             }
         } else {
+            if displayMode == .panel, previousApprovalRequestID != nil {
+                setDisplayMode(.island)
+            }
             collapsedInlineApprovalID = nil
             approvalDiagnosticMessage = nil
         }
