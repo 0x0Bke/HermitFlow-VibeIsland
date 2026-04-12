@@ -89,7 +89,9 @@ HermitFlow can also read Claude usage locally from its own managed cache file:
 
 - `/tmp/hermitflow-rl.json`
 
-This file is optional and local-only. HermitFlow writes it from its own Claude hook and `statusLine` bridge when upstream Claude payloads expose compatible usage fields. No network requests are made for usage. If the file does not exist, Claude usage is simply not shown.
+This file is optional and local-only. HermitFlow writes it from its own Claude hook and `statusLine` bridge when upstream Claude payloads expose compatible usage fields. If the file does not exist, HermitFlow can also fall back to a third-party provider usage query defined in:
+
+- `~/.hermitflow/claude-provider-usage.json`
 
 ## Requirements
 
@@ -127,19 +129,57 @@ If Claude hook initialization fails, the app still runs, but Claude Code status 
 
 ### Usage Section
 
-The expanded panel shows local usage in the same card stack as the session list:
+The expanded panel shows usage in the same card stack as the session list:
 
-- `Claude`: `5h` and `wk` remaining percentage bars when a local Claude usage cache exists
+- `Claude`: `5h` and `wk` remaining percentage bars when a local Claude usage cache exists, or a supported third-party Claude provider responds with compatible quota data
 - `Codex`: `5h` and `wk` remaining percentage bars when local rollout usage data exists
 
 The usage section is local-first and optional:
 
 - no usage file: the panel still works and the usage rows are omitted
 - stale or malformed usage file: the panel still works and the invalid provider row is omitted
+- supported third-party provider detected with valid remote quota: the Claude row/card is labeled as `Claude · <Provider>`
 
 The current UI shows remaining quota rather than used quota.
 
-For Claude, usage visibility depends on the local payload shape. Official Claude-style `rate_limits.five_hour` and `rate_limits.seven_day` fields are rendered as `5h` and `wk`. Some third-party Anthropic-compatible models expose only context-window data or omit rate-limit fields entirely, in which case Claude usage will be absent even though Claude activity and approvals still work.
+For Claude, usage visibility depends on either the local payload shape or a supported third-party provider response. Official Claude-style `rate_limits.five_hour` and `rate_limits.seven_day` fields are rendered as `5h` and `wk`. Some third-party Anthropic-compatible models expose only context-window data or omit rate-limit fields entirely, in which case Claude usage will be absent even though Claude activity and approvals still work.
+
+### Third-Party Claude Providers
+
+HermitFlow can detect supported third-party Claude providers by reading:
+
+- `ANTHROPIC_BASE_URL`
+- `ANTHROPIC_MODEL`
+- the latest managed Claude `statusLine` payload
+
+Provider usage definitions live in:
+
+- `~/.hermitflow/claude-provider-usage.json`
+
+The first launch writes a default template for:
+
+- `ZenMux`
+- `MinMax`
+
+Current built-in default endpoints:
+
+- `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
+- `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
+
+Each provider entry defines:
+
+- how the provider is matched
+- which usage endpoint to call
+- what request headers/query/body to send
+- which `authEnvKey` to use for `Authorization: Bearer <token>`
+- how to map the response into Claude `5h` / `wk` windows
+
+`authEnvKey` supports two forms:
+
+- an environment variable name from Claude `settings.json.env`
+- a direct token value such as `sk-...`
+
+If `~/.hermitflow/claude-provider-usage.json` already exists, HermitFlow does not overwrite it automatically. Update the local file manually to pick up changed default endpoints.
 
 ## Permissions And Configuration
 

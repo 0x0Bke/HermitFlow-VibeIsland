@@ -18,6 +18,9 @@ enum UsageSummaryFormatter {
         }
 
         var parts: [String] = []
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            parts.append(providerDisplayName)
+        }
         if let fiveHour = snapshot.fiveHour {
             parts.append("5h \(fiveHour.roundedUsedPercentage)%")
         }

@@ -21,7 +21,7 @@ struct UsageSummaryView: View {
 
                     Spacer(minLength: 8)
 
-                    Text("Local")
+                    Text(sourceLabel)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.56))
                         .padding(.horizontal, 6)
@@ -41,5 +41,13 @@ struct UsageSummaryView: View {
                 }
             }
         }
+    }
+
+    private var sourceLabel: String {
+        if claudeUsageSnapshot?.sourceKind == .remoteProvider {
+            return "Hybrid"
+        }
+
+        return "Local"
     }
 }

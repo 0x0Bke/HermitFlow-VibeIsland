@@ -304,7 +304,7 @@ private extension IslandRootView {
         VStack(alignment: .leading, spacing: 8) {
             if let claudeUsageSnapshot = store.claudeUsageSnapshot, !claudeUsageSnapshot.isEmpty {
                 usageProviderRow(
-                    title: "Claude",
+                    title: claudeUsageTitle(for: claudeUsageSnapshot),
                     shortLabel: "5h",
                     shortValue: claudeUsageSnapshot.fiveHour?.leftPercentage,
                     longLabel: "wk",
@@ -335,11 +335,19 @@ private extension IslandRootView {
             Text(title)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.78))
-                .frame(width: 48, alignment: .leading)
+                .frame(width: 108, alignment: .leading)
 
             usageMetricChip(label: shortLabel, value: shortValue)
             usageMetricChip(label: longLabel, value: longValue)
         }
+    }
+
+    func claudeUsageTitle(for snapshot: ClaudeUsageSnapshot) -> String {
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            return "Claude · \(providerDisplayName)"
+        }
+
+        return "Claude"
     }
 
     func usageMetricChip(label: String, value: Double?) -> some View {

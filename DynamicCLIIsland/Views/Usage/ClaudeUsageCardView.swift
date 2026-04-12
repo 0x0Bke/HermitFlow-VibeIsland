@@ -47,7 +47,7 @@ struct ClaudeUsageCardView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text("Claude Code")
+            Text(headerTitle)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white)
 
@@ -59,6 +59,14 @@ struct ClaudeUsageCardView: View {
                     .foregroundStyle(Color.white.opacity(0.5))
             }
         }
+    }
+
+    private var headerTitle: String {
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            return "Claude Code · \(providerDisplayName)"
+        }
+
+        return "Claude Code"
     }
 
     private func metricCard(title: String, window: ClaudeUsageWindow, subtitle: String) -> some View {

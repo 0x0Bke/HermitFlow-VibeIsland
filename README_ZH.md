@@ -89,7 +89,9 @@ HermitFlow 也支持从自己管理的本地缓存文件读取 Claude 额度：
 
 - `/tmp/hermitflow-rl.json`
 
-这个文件是可选的本地产物。HermitFlow 会在 Claude hook 与 `statusLine` bridge 读到兼容的额度字段后自行写入它。HermitFlow 不会为了额度数据发起网络请求。如果这个文件不存在，Claude 额度不会显示，但应用仍会正常运行。
+这个文件是可选的本地产物。HermitFlow 会在 Claude hook 与 `statusLine` bridge 读到兼容的额度字段后自行写入它。如果这个文件不存在，HermitFlow 也可以回退到三方 provider 查询配置：
+
+- `~/.hermitflow/claude-provider-usage.json`
 
 ## 运行要求
 
@@ -127,19 +129,57 @@ HermitFlow 也支持从自己管理的本地缓存文件读取 Claude 额度：
 
 ### 额度展示
 
-展开面板会在会话卡片区域显示本地额度信息：
+展开面板会在会话卡片区域显示额度信息：
 
-- `Claude`：存在本地 Claude 缓存时展示 `5h` 与 `wk` 两个剩余额度进度条
+- `Claude`：存在本地 Claude 缓存时展示 `5h` 与 `wk` 两个剩余额度进度条；若命中受支持的三方 Claude provider，也可通过 provider 接口展示
 - `Codex`：存在本地 rollout 额度数据时展示 `5h` 与 `wk` 两个剩余额度进度条
 
 额度展示遵循本地优先和可选降级：
 
 - 没有额度文件：面板正常工作，只是不显示额度行
 - 额度文件损坏或格式不兼容：面板正常工作，只是不显示对应 provider 的额度行
+- 若识别到受支持的三方 provider 且远程额度查询成功：Claude 行/卡片会显示为 `Claude · <Provider>`
 
 当前 UI 展示的是剩余额度，而不是已使用额度。
 
-对于 Claude，是否能显示额度取决于本地 payload 的字段形状。只有当上游 payload 提供官方 Claude 风格的 `rate_limits.five_hour` 与 `rate_limits.seven_day` 时，HermitFlow 才会显示 `5h` / `wk`。某些第三方 Anthropic 兼容模型只提供 context window 信息，或者完全不提供 rate limit 字段，此时 Claude 活动和审批仍然可用，但 Claude 额度不会显示。
+对于 Claude，是否能显示额度取决于本地 payload 形状或受支持 provider 的响应结构。只有当上游 payload 提供官方 Claude 风格的 `rate_limits.five_hour` 与 `rate_limits.seven_day`，或者三方 provider 响应能被映射为兼容窗口时，HermitFlow 才会显示 `5h` / `wk`。某些第三方 Anthropic 兼容模型只提供 context window 信息，或者完全不提供 rate limit 字段，此时 Claude 活动和审批仍然可用，但 Claude 额度不会显示。
+
+### Claude 三方 Provider
+
+HermitFlow 可以通过以下信息识别受支持的 Claude 三方 provider：
+
+- `ANTHROPIC_BASE_URL`
+- `ANTHROPIC_MODEL`
+- 最近一次受管 Claude `statusLine` payload
+
+provider 查询配置文件位于：
+
+- `~/.hermitflow/claude-provider-usage.json`
+
+首次启动会自动写入默认模板，内置：
+
+- `ZenMux`
+- `MinMax`
+
+当前内置默认接口：
+
+- `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
+- `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
+
+每个 provider 配置项可定义：
+
+- 如何识别该 provider
+- 该调用哪个额度接口
+- 请求头、query、body 如何构造
+- `Authorization: Bearer <token>` 应读取哪个 `authEnvKey`
+- 如何把 provider 响应映射成 Claude `5h` / `wk` 窗口
+
+`authEnvKey` 现在支持两种写法：
+
+- Claude `settings.json.env` 中的环境变量名
+- 直接写真实 token，例如 `sk-...`
+
+如果 `~/.hermitflow/claude-provider-usage.json` 已经存在，HermitFlow 不会自动覆盖它。默认接口变更后，需要手动更新本地文件。
 
 ## 权限与配置
 
