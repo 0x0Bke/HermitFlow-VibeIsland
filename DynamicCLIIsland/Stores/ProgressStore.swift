@@ -86,6 +86,8 @@ final class ProgressStore: ObservableObject {
     var isExpanded: Bool { appStore.isExpanded }
     var isHiddenMode: Bool { appStore.isHiddenMode }
     var hasInlineApprovalIsland: Bool { appStore.hasInlineApprovalIsland }
+    var panelTransition: PresentationStore.PanelTransitionConfiguration { appStore.panelTransition }
+    var windowResizeAnimation: PresentationStore.WindowResizeAnimation { appStore.windowResizeAnimation }
     var modeName: String { appStore.modeName }
     var focusTargetLabel: String? { appStore.focusTargetLabel }
     var accessibilityPermissionMessage: String? { appStore.accessibilityPermissionMessage }

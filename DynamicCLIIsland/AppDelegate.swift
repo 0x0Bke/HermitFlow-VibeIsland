@@ -92,17 +92,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let rootView = IslandRootView(store: store)
         let hostingView = NSHostingView(rootView: rootView)
         windowCoordinator.configure(window: window, with: hostingView)
-        position(window: window, size: size, animated: false)
+        position(window: window, size: size, animation: nil)
         windowCoordinator.makeKeyAndOrderFront()
         windowCoordinator.orderFront()
-        position(window: window, size: size, animated: false)
+        position(window: window, size: size, animation: nil)
 
         store.onWindowSizeChange = { [weak self] newSize in
             guard let self, !self.isPositioningWindow else {
                 return
             }
 
-            self.position(window: window, size: newSize, animated: true)
+            self.position(
+                window: window,
+                size: newSize,
+                animation: self.windowAnimation(for: self.store.windowResizeAnimation)
+            )
         }
 
         self.window = window
@@ -268,7 +272,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Dynamic CLI Island")
     }
 
-    private func position(window: NSWindow, size: CGSize, animated: Bool, preferMouseScreen: Bool = false) {
+    private func position(
+        window: NSWindow,
+        size: CGSize,
+        animation: WindowSizingCoordinator.FrameAnimation?,
+        preferMouseScreen: Bool = false
+    ) {
         isPositioningWindow = true
         defer { isPositioningWindow = false }
 
@@ -289,16 +298,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         updatePanelHoverArming(for: targetFrame)
 
-        if animated {
-            let isExpanding = targetFrame.height > window.frame.height
-            guard isExpanding else {
-                windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: false)
-                return
-            }
+        windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animation: animation)
+    }
 
-            windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: true)
-        } else {
-            windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: false)
+    private func windowAnimation(
+        for resizeAnimation: PresentationStore.WindowResizeAnimation
+    ) -> WindowSizingCoordinator.FrameAnimation? {
+        switch resizeAnimation {
+        case .none:
+            return nil
+        case .panelTransition:
+            return WindowSizingCoordinator.FrameAnimation(
+                duration: store.panelTransition.windowDuration,
+                timingFunctionName: .easeInEaseOut
+            )
         }
     }
 
@@ -620,7 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        position(window: window, size: store.windowSize, animated: false)
+        position(window: window, size: store.windowSize, animation: nil)
         window.orderFrontRegardless()
         rebuildScreenMenu()
         updateMenuState()
@@ -693,7 +706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isWindowVisible {
             windowCoordinator.hideWindow()
         } else {
-            position(window: window, size: store.windowSize, animated: false)
+            position(window: window, size: store.windowSize, animation: nil)
             windowCoordinator.showWindow()
         }
 
@@ -776,7 +789,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func handleScreenParametersChange(_ notification: Notification) {
         rebuildScreenMenu()
         guard let window else { return }
-        position(window: window, size: store.windowSize, animated: false)
+        position(window: window, size: store.windowSize, animation: nil)
     }
 
     @objc
@@ -786,7 +799,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             changedWindow == window
         else { return }
 
-        position(window: changedWindow, size: store.windowSize, animated: false)
+        position(window: changedWindow, size: store.windowSize, animation: nil)
     }
 
     @objc
@@ -798,7 +811,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             store.suppressPanelAutoCollapse(for: 2.0)
         }
 
-        position(window: window, size: store.windowSize, animated: false, preferMouseScreen: true)
+        position(window: window, size: store.windowSize, animation: nil, preferMouseScreen: true)
         windowCoordinator.orderFront()
 
         // AppKit can briefly report the previous screen during a trackpad space
@@ -809,7 +822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if shouldKeepPanelExpanded, !self.store.isExpanded {
                 self.store.showPanel()
             }
-            self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
+            self.position(window: window, size: self.store.windowSize, animation: nil, preferMouseScreen: true)
             self.windowCoordinator.orderFront()
         }
 
@@ -819,7 +832,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if shouldKeepPanelExpanded, !self.store.isExpanded {
                 self.store.showPanel()
             }
-            self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
+            self.position(window: window, size: self.store.windowSize, animation: nil, preferMouseScreen: true)
             self.windowCoordinator.orderFront()
         }
 
@@ -829,7 +842,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if shouldKeepPanelExpanded, !self.store.isExpanded {
                 self.store.showPanel()
             }
-            self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
+            self.position(window: window, size: self.store.windowSize, animation: nil, preferMouseScreen: true)
             self.windowCoordinator.orderFront()
         }
     }
@@ -845,7 +858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        position(window: window, size: store.windowSize, animated: false)
+        position(window: window, size: store.windowSize, animation: nil)
         windowCoordinator.orderFront()
     }
 

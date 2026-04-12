@@ -87,6 +87,8 @@ final class AppStore: ObservableObject {
     var isExpanded: Bool { presentationStore.isExpanded }
     var isHiddenMode: Bool { presentationStore.isHiddenMode }
     var hasInlineApprovalIsland: Bool { presentationStore.hasInlineApprovalIsland }
+    var panelTransition: PresentationStore.PanelTransitionConfiguration { presentationStore.panelTransition }
+    var windowResizeAnimation: PresentationStore.WindowResizeAnimation { presentationStore.windowResizeAnimation }
     var modeName: String { presentationStore.displayMode.rawValue }
     var focusTargetLabel: String? { runtimeStore.focusTarget?.displayName }
     var panelTitle: String {

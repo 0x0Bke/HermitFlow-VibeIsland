@@ -13,17 +13,37 @@ import QuartzCore
 /// Phase 1 does not move layout policy or sizing heuristics out of `AppDelegate`.
 @MainActor
 final class WindowSizingCoordinator {
-    func applySize(_ size: CGSize, to window: NSWindow, display: Bool = true) {
-        var frame = window.frame
-        frame.size = size
-        applyFrame(frame, to: window, display: display)
+    struct FrameAnimation {
+        let duration: TimeInterval
+        let timingFunctionName: CAMediaTimingFunctionName
+
+        static let panelTransition = FrameAnimation(
+            duration: 0.24,
+            timingFunctionName: .easeInEaseOut
+        )
     }
 
-    func applyFrame(_ frame: NSRect, to window: NSWindow, display: Bool = true, animate: Bool = false) {
-        if animate {
+    func applySize(
+        _ size: CGSize,
+        to window: NSWindow,
+        display: Bool = true,
+        animation: FrameAnimation? = nil
+    ) {
+        var frame = window.frame
+        frame.size = size
+        applyFrame(frame, to: window, display: display, animation: animation)
+    }
+
+    func applyFrame(
+        _ frame: NSRect,
+        to window: NSWindow,
+        display: Bool = true,
+        animation: FrameAnimation? = nil
+    ) {
+        if let animation {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.duration = animation.duration
+                context.timingFunction = CAMediaTimingFunction(name: animation.timingFunctionName)
                 window.animator().setFrame(frame, display: display)
             }
         } else {
