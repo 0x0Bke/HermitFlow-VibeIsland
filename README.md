@@ -1,5 +1,7 @@
 # HermitFlow
 
+[English](README.md) | [简体中文](README_ZH.md)
+
 HermitFlow is a SwiftUI-based macOS top island app that surfaces local `Claude Code`, `Codex`, and other CLI session activity, approval requests, and quick focus targets.
 
 Its goal is not to replace your terminal or desktop client, but to keep the most important CLI state visible at the top of the screen while you work.
@@ -20,9 +22,10 @@ Together, the name describes AI and task flows that live inside the system and k
 - Aggregates recent local sessions from both `Claude Code` and `Codex`
 - Shows session origin, working directory, runtime status, and last update time
 - Detects approval requests and lets you handle them directly from the island or panel
+- Inline approval supports keyboard selection and confirmation
 - Reads local-first usage snapshots for both `Claude Code` and `Codex`
 - Renders Claude/Codex usage bars in the expanded panel without requiring network access
-- Provides one-click focus targets for supported sessions
+- Provides one-click focus targets for supported `Claude Code` and `Codex` sessions
 - Status bar menu supports show/hide and switching the left-side brand logo
 - Status bar menu supports manual `Resync Claude Hooks`
 - Built-in diagnostic card in the panel for Claude hook sync errors
@@ -34,6 +37,10 @@ Together, the name describes AI and task flows that live inside the system and k
 ### Idle
 
 ![HermitFlow idle state](docs/images/idle.png)
+
+### Panel
+
+![HermitFlow Panel](docs/images/panel.png)
 
 ### Running
 
@@ -120,11 +127,15 @@ If Claude hook initialization fails, the app still runs, but Claude Code status 
 - Single-click the island: hidden -> island, or island -> panel
 - Double-click the island: island/panel -> hidden
 - Open the panel to inspect recent sessions, approval requests, and session details
+- Approval cards in the panel can be handled directly with `Deny`, `Allow Once`, and `Always Allow`
 - The expanded panel can also show local usage bars for `Claude` and `Codex`
 - When an approval request exists, the island expands into an inline approval card
+- In the inline approval card, use `Left` / `Right` to switch the selected action and `Return` to confirm it
 - If an approval is handled directly in the terminal, HermitFlow collapses the approval UI after the local sources observe that the request has been resolved or has disappeared
 - The `Diagnostic` card shows Claude hook sync failures
 - Use `Resync Claude Hooks` from either the panel or the status bar menu to retry hook synchronization
+- Use the focus button on a session or approval card to bring the related `Claude Code` / `Codex` client forward
+- For `Claude Code` terminal sessions, HermitFlow can also try to route to the matching `iTerm` tab/session or `Warp` window when local session hints are available
 - Use the status bar icon to show/hide the window and switch the left-side logo
 
 ### Usage Section
