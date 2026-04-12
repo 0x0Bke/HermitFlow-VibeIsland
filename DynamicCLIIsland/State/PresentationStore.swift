@@ -177,10 +177,6 @@ final class PresentationStore: ObservableObject {
             return
         }
 
-        guard currentApprovalRequest == nil else {
-            return
-        }
-
         setDisplayMode(.island)
     }
 

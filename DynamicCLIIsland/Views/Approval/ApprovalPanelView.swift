@@ -77,6 +77,37 @@ struct ApprovalPanelView: View {
                 diagnosticCallout(diagnosticMessage)
             }
 
+            HStack(spacing: 8) {
+                decisionButton(
+                    title: "Deny",
+                    systemImage: "xmark",
+                    titleColor: Color(red: 1.0, green: 0.42, blue: 0.42),
+                    background: Color.white.opacity(0.08),
+                    border: Color.white.opacity(0.08),
+                    borderWidth: 1,
+                    action: store.rejectApproval
+                )
+
+                decisionButton(
+                    title: "Allow Once",
+                    systemImage: "checkmark",
+                    titleColor: .white,
+                    background: Color(red: 0.13, green: 0.77, blue: 0.37),
+                    action: store.acceptApproval
+                )
+
+                decisionButton(
+                    title: "Always Allow",
+                    systemImage: "checkmark.circle",
+                    titleColor: Color.white.opacity(0.74),
+                    iconColor: Color(red: 0.13, green: 0.77, blue: 0.37),
+                    background: Color.white.opacity(0.06),
+                    border: Color.white.opacity(0.09),
+                    borderWidth: 1,
+                    action: store.acceptAllApprovals
+                )
+            }
+
             if let focusTarget = request.focusTarget {
                 HStack(alignment: .center, spacing: 10) {
                     metaChip(systemImage: "macwindow", text: "Target: \(focusTarget.displayName)")
@@ -194,6 +225,42 @@ struct ApprovalPanelView: View {
             Capsule(style: .continuous)
                 .fill(Color.white.opacity(0.06))
         )
+    }
+
+    private func decisionButton(
+        title: String,
+        systemImage: String,
+        titleColor: Color,
+        iconColor: Color? = nil,
+        background: Color,
+        border: Color = .clear,
+        borderWidth: CGFloat = 0,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(iconColor ?? titleColor)
+
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(titleColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(background)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(border, lineWidth: borderWidth)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func diagnosticCallout(_ message: String) -> some View {

@@ -551,11 +551,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        guard store.approvalRequest == nil else {
-            debugLog("collapsePanelIfNeeded ignored because approval is active")
-            return
-        }
-
         let clickLocation = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? NSEvent.mouseLocation
         guard !window.frame.contains(clickLocation) else {
             return
