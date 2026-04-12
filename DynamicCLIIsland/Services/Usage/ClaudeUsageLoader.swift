@@ -58,8 +58,7 @@ enum ClaudeUsageLoader {
             return nil
         }
 
-        if provider.id == "minmax",
-           let specializedSnapshot = parseMinMaxUsageSnapshot(from: responseObject, provider: provider) {
+        if let specializedSnapshot = parseSpecializedUsageSnapshot(from: responseObject, provider: provider) {
             return specializedSnapshot
         }
 
@@ -85,6 +84,22 @@ enum ClaudeUsageLoader {
         }
 
         return snapshot
+    }
+
+    private static func parseSpecializedUsageSnapshot(
+        from jsonObject: Any,
+        provider: ResolvedClaudeProvider
+    ) -> ClaudeUsageSnapshot? {
+        switch provider.id {
+        case "minmax":
+            return parseMinMaxUsageSnapshot(from: jsonObject, provider: provider)
+        case "kimi":
+            return parseKimiUsageSnapshot(from: jsonObject, provider: provider)
+        case "zhipu-cn", "zhipu-en":
+            return parseZhipuUsageSnapshot(from: jsonObject, provider: provider)
+        default:
+            return nil
+        }
     }
 
     private static func parseMinMaxUsageSnapshot(from jsonObject: Any, provider: ResolvedClaudeProvider) -> ClaudeUsageSnapshot? {
@@ -119,6 +134,95 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: fiveHour,
             sevenDay: sevenDay,
+            cachedAt: Date(),
+            providerID: provider.id,
+            providerDisplayName: provider.displayName,
+            sourceKind: .remoteProvider
+        )
+
+        return snapshot.isEmpty ? nil : snapshot
+    }
+
+    private static func parseKimiUsageSnapshot(from jsonObject: Any, provider: ResolvedClaudeProvider) -> ClaudeUsageSnapshot? {
+        guard let root = jsonObject as? [String: Any] else {
+            return nil
+        }
+
+        var fiveHour: ClaudeUsageWindow?
+        if let limits = root["limits"] as? [[String: Any]] {
+            for limitItem in limits {
+                guard let detail = limitItem["detail"] as? [String: Any] else {
+                    continue
+                }
+
+                let limit = numericValue(detail["limit"]) ?? 0
+                let remaining = numericValue(detail["remaining"]) ?? 0
+                guard limit > 0 else {
+                    continue
+                }
+
+                let usedPercentage = min(max((limit - remaining) / limit, 0), 1)
+                fiveHour = ClaudeUsageWindow(
+                    usedPercentage: usedPercentage,
+                    resetsAt: parseDate(detail["resetTime"])
+                )
+                break
+            }
+        }
+
+        var sevenDay: ClaudeUsageWindow?
+        if let usage = root["usage"] as? [String: Any] {
+            let limit = numericValue(usage["limit"]) ?? 0
+            let remaining = numericValue(usage["remaining"]) ?? 0
+            if limit > 0 {
+                let usedPercentage = min(max((limit - remaining) / limit, 0), 1)
+                sevenDay = ClaudeUsageWindow(
+                    usedPercentage: usedPercentage,
+                    resetsAt: parseDate(usage["resetTime"])
+                )
+            }
+        }
+
+        let snapshot = ClaudeUsageSnapshot(
+            fiveHour: fiveHour,
+            sevenDay: sevenDay,
+            cachedAt: Date(),
+            providerID: provider.id,
+            providerDisplayName: provider.displayName,
+            sourceKind: .remoteProvider
+        )
+
+        return snapshot.isEmpty ? nil : snapshot
+    }
+
+    private static func parseZhipuUsageSnapshot(from jsonObject: Any, provider: ResolvedClaudeProvider) -> ClaudeUsageSnapshot? {
+        guard let root = jsonObject as? [String: Any],
+              let success = root["success"] as? Bool,
+              success,
+              let data = root["data"] as? [String: Any],
+              let limits = data["limits"] as? [[String: Any]] else {
+            return nil
+        }
+
+        var fiveHour: ClaudeUsageWindow?
+        for limitItem in limits {
+            let limitType = (limitItem["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard limitType == "TOKENS_LIMIT" else {
+                continue
+            }
+
+            let percentageValue = numericValue(limitItem["percentage"]) ?? 0
+            let usedPercentage = percentageValue > 1 ? min(max(percentageValue / 100, 0), 1) : min(max(percentageValue, 0), 1)
+            fiveHour = ClaudeUsageWindow(
+                usedPercentage: usedPercentage,
+                resetsAt: parseDate(limitItem["nextResetTime"])
+            )
+            break
+        }
+
+        let snapshot = ClaudeUsageSnapshot(
+            fiveHour: fiveHour,
+            sevenDay: nil,
             cachedAt: Date(),
             providerID: provider.id,
             providerDisplayName: provider.displayName,
@@ -249,7 +353,9 @@ enum ClaudeUsageLoader {
                 )
                 return nil
             }
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let authHeaderName = provider.definition.usageRequest.authHeaderName ?? "Authorization"
+            let authPrefix = provider.definition.usageRequest.authPrefix ?? "Bearer "
+            request.setValue("\(authPrefix)\(token)", forHTTPHeaderField: authHeaderName)
         }
 
         if let body = provider.definition.usageRequest.body, !body.isEmpty {
@@ -828,6 +934,86 @@ struct ClaudeProviderUsageConfig: Codable, Hashable {
     static let defaultConfig = ClaudeProviderUsageConfig(
         providers: [
             ClaudeProviderDefinition(
+                id: "kimi",
+                displayName: "Kimi",
+                match: ClaudeProviderMatchRule(
+                    baseURLHosts: ["api.kimi.com"],
+                    baseURLPrefixes: ["https://api.kimi.com/coding"],
+                    modelPrefixes: ["kimi", "moonshot"]
+                ),
+                usageRequest: ClaudeProviderUsageRequest(
+                    method: "GET",
+                    url: "https://api.kimi.com/coding/v1/usages",
+                    authEnvKey: "ANTHROPIC_AUTH_TOKEN",
+                    authHeaderName: nil,
+                    authPrefix: "Bearer ",
+                    headers: [
+                        "Accept": "application/json"
+                    ],
+                    query: nil,
+                    body: nil
+                ),
+                responseMapping: ClaudeProviderResponseMapping(
+                    fiveHour: nil,
+                    sevenDay: nil,
+                    fallbackWindow: nil
+                )
+            ),
+            ClaudeProviderDefinition(
+                id: "zhipu-cn",
+                displayName: "Zhipu",
+                match: ClaudeProviderMatchRule(
+                    baseURLHosts: ["open.bigmodel.cn", "bigmodel.cn"],
+                    baseURLPrefixes: ["https://open.bigmodel.cn", "https://bigmodel.cn"],
+                    modelPrefixes: ["glm", "zhipu"]
+                ),
+                usageRequest: ClaudeProviderUsageRequest(
+                    method: "GET",
+                    url: "https://api.z.ai/api/monitor/usage/quota/limit",
+                    authEnvKey: "ANTHROPIC_AUTH_TOKEN",
+                    authHeaderName: "Authorization",
+                    authPrefix: "",
+                    headers: [
+                        "Content-Type": "application/json",
+                        "Accept-Language": "en-US,en"
+                    ],
+                    query: nil,
+                    body: nil
+                ),
+                responseMapping: ClaudeProviderResponseMapping(
+                    fiveHour: nil,
+                    sevenDay: nil,
+                    fallbackWindow: nil
+                )
+            ),
+            ClaudeProviderDefinition(
+                id: "zhipu-en",
+                displayName: "Zhipu",
+                match: ClaudeProviderMatchRule(
+                    baseURLHosts: ["api.z.ai"],
+                    baseURLPrefixes: ["https://api.z.ai"],
+                    modelPrefixes: ["glm", "zhipu"]
+                ),
+                usageRequest: ClaudeProviderUsageRequest(
+                    method: "GET",
+                    url: "https://api.z.ai/api/monitor/usage/quota/limit",
+                    authEnvKey: "ANTHROPIC_AUTH_TOKEN",
+                    authHeaderName: "Authorization",
+                    authPrefix: "",
+                    headers: [
+                        "Content-Type": "application/json",
+                        "Accept-Language": "en-US,en"
+                    ],
+                    query: nil,
+                    body: nil
+                ),
+                responseMapping: ClaudeProviderResponseMapping(
+                    fiveHour: nil,
+                    sevenDay: nil,
+                    fallbackWindow: nil
+                )
+            ),
+            ClaudeProviderDefinition(
                 id: "zenmux",
                 displayName: "ZenMux",
                 match: ClaudeProviderMatchRule(
@@ -839,6 +1025,8 @@ struct ClaudeProviderUsageConfig: Codable, Hashable {
                     method: "GET",
                     url: "https://zenmux.ai/api/v1/management/subscription/detail",
                     authEnvKey: "ANTHROPIC_AUTH_TOKEN",
+                    authHeaderName: nil,
+                    authPrefix: "Bearer ",
                     headers: [:],
                     query: nil,
                     body: nil
@@ -879,6 +1067,8 @@ struct ClaudeProviderUsageConfig: Codable, Hashable {
                     method: "GET",
                     url: "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
                     authEnvKey: "ANTHROPIC_AUTH_TOKEN",
+                    authHeaderName: nil,
+                    authPrefix: "Bearer ",
                     headers: [:],
                     query: nil,
                     body: nil
@@ -929,6 +1119,8 @@ struct ClaudeProviderUsageRequest: Codable, Hashable {
     var method: String
     var url: String
     var authEnvKey: String?
+    var authHeaderName: String?
+    var authPrefix: String?
     var headers: [String: String]?
     var query: [String: String]?
     var body: [String: String]?

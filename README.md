@@ -158,11 +158,15 @@ Provider usage definitions live in:
 
 The first launch writes a default template for:
 
+- `Kimi`
+- `Zhipu`
 - `ZenMux`
 - `MinMax`
 
 Current built-in default endpoints:
 
+- `Kimi`: `https://api.kimi.com/coding/v1/usages`
+- `Zhipu`: `https://api.z.ai/api/monitor/usage/quota/limit`
 - `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
 - `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
 
@@ -170,6 +174,7 @@ Each provider entry defines:
 
 - how the provider is matched
 - which usage endpoint to call
+- which auth header name and prefix to use
 - what request headers/query/body to send
 - which `authEnvKey` to use for `Authorization: Bearer <token>`
 - how to map the response into Claude `5h` / `wk` windows
@@ -180,6 +185,15 @@ Each provider entry defines:
 - a direct token value such as `sk-...`
 
 If `~/.hermitflow/claude-provider-usage.json` already exists, HermitFlow does not overwrite it automatically. Update the local file manually to pick up changed default endpoints.
+
+For providers with non-uniform response shapes, HermitFlow also includes provider-specific parsers:
+
+- `ZenMux`: reads `data.quota_5_hour` and `data.quota_7_day`
+- `MinMax`: reads `model_remains[]`, prefers the current Claude model, then falls back to `MiniMax-M*`
+- `Kimi`: reads `limits[].detail` and top-level `usage`
+- `Zhipu`: reads `data.limits[]` with `type == TOKENS_LIMIT`
+
+This means some providers can work even when a simple static JSON-path mapping would not be sufficient.
 
 ## Permissions And Configuration
 

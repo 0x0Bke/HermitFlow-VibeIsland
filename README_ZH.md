@@ -158,11 +158,15 @@ provider 查询配置文件位于：
 
 首次启动会自动写入默认模板，内置：
 
+- `Kimi`
+- `Zhipu`
 - `ZenMux`
 - `MinMax`
 
 当前内置默认接口：
 
+- `Kimi`: `https://api.kimi.com/coding/v1/usages`
+- `Zhipu`: `https://api.z.ai/api/monitor/usage/quota/limit`
 - `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
 - `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
 
@@ -170,6 +174,7 @@ provider 查询配置文件位于：
 
 - 如何识别该 provider
 - 该调用哪个额度接口
+- 认证 header 名称和前缀如何拼装
 - 请求头、query、body 如何构造
 - `Authorization: Bearer <token>` 应读取哪个 `authEnvKey`
 - 如何把 provider 响应映射成 Claude `5h` / `wk` 窗口
@@ -180,6 +185,15 @@ provider 查询配置文件位于：
 - 直接写真实 token，例如 `sk-...`
 
 如果 `~/.hermitflow/claude-provider-usage.json` 已经存在，HermitFlow 不会自动覆盖它。默认接口变更后，需要手动更新本地文件。
+
+对于响应结构不统一的 provider，HermitFlow 也内置了 provider-specific 解析逻辑：
+
+- `ZenMux`：解析 `data.quota_5_hour` 和 `data.quota_7_day`
+- `MinMax`：解析 `model_remains[]`，优先匹配当前 Claude 模型，再回退到 `MiniMax-M*`
+- `Kimi`：解析 `limits[].detail` 和顶层 `usage`
+- `Zhipu`：解析 `data.limits[]` 中 `type == TOKENS_LIMIT` 的额度项
+
+也就是说，某些 provider 即使无法只靠静态 JSON path，也仍然可以正常展示额度。
 
 ## 权限与配置
 
