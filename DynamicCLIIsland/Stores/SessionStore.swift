@@ -1,5 +1,10 @@
 import Foundation
 
+/// Legacy snapshot transformer retained during the Phase 4 reducer migration.
+///
+/// `RuntimeStore` now prefers reducer-owned state updates routed through
+/// `IslandEvent`, but this type remains available as a compatibility seam
+/// while older file/demo flows and adapters are still being retired.
 final class SessionStore {
     private let panelVisibilityThreshold: TimeInterval = 60 * 60
     private(set) var sessions: [AgentSessionSnapshot] = []
@@ -15,7 +20,8 @@ final class SessionStore {
             statusMessage: activitySnapshot.statusMessage,
             lastUpdatedAt: activitySnapshot.lastUpdatedAt,
             errorMessage: activitySnapshot.errorMessage,
-            approvalRequest: activitySnapshot.approvalRequest
+            approvalRequest: activitySnapshot.approvalRequest,
+            usageSnapshots: activitySnapshot.usageSnapshots
         )
     }
 
@@ -36,7 +42,8 @@ final class SessionStore {
             statusMessage: sourceLabel,
             lastUpdatedAt: progressEnvelope.generatedAt,
             errorMessage: errorMessage,
-            approvalRequest: nil
+            approvalRequest: nil,
+            usageSnapshots: []
         )
     }
 
@@ -50,7 +57,8 @@ final class SessionStore {
             statusMessage: statusMessage,
             lastUpdatedAt: lastUpdatedAt,
             errorMessage: errorMessage,
-            approvalRequest: nil
+            approvalRequest: nil,
+            usageSnapshots: []
         )
     }
 

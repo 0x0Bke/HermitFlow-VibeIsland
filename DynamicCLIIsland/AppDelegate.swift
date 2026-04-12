@@ -11,7 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case fixed(CGDirectDisplayID)
     }
 
-    private let store = ProgressStore()
+    private let environment = AppEnvironment()
+    private var store: ProgressStore { environment.progressStore }
     private var window: NSWindow?
     private var isPositioningWindow = false
     private var localMouseMonitor: Any?
@@ -34,13 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let fixedScreenIDDefaultsKey = "HermitFlow.fixedScreenID"
     private let debugLogURL = URL(fileURLWithPath: "/tmp/hermitflow-approval-debug.log")
 
+    private var windowCoordinator: IslandWindowCoordinator { environment.windowCoordinator }
+    private var windowSizingCoordinator: WindowSizingCoordinator { environment.windowSizingCoordinator }
+    private var screenPlacementCoordinator: ScreenPlacementCoordinator { environment.screenPlacementCoordinator }
+    private var statusItemCoordinator: StatusItemCoordinator { environment.statusItemCoordinator }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         createWindow()
         createStatusItem()
         registerScreenObservers()
         registerOutsideClickMonitors()
-        store.handleLaunch()
+        environment.appBootstrapper.bootstrap()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -84,10 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.isReleasedWhenClosed = false
 
         let rootView = IslandRootView(store: store)
-        window.contentView = NSHostingView(rootView: rootView)
+        let hostingView = NSHostingView(rootView: rootView)
+        windowCoordinator.configure(window: window, with: hostingView)
         position(window: window, size: size, animated: false)
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
+        windowCoordinator.makeKeyAndOrderFront()
+        windowCoordinator.orderFront()
         position(window: window, size: size, animated: false)
 
         store.onWindowSizeChange = { [weak self] newSize in
@@ -224,13 +231,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quitMenuItem.target = self
         menu.addItem(quitMenuItem)
 
+        statusItemCoordinator.attach(statusItem: statusItem)
         if let button = statusItem.button {
-            button.image = makeStatusBarImage()
+            statusItemCoordinator.setImage(makeStatusBarImage())
             button.imagePosition = .imageOnly
-            button.toolTip = "Dynamic CLI Island"
+            statusItemCoordinator.setToolTip("Dynamic CLI Island")
         }
 
-        statusItem.menu = menu
+        statusItemCoordinator.setMenu(menu)
         self.statusItem = statusItem
         self.visibilityMenuItem = visibilityMenuItem
         self.screenMenuItem = screenMenuItem
@@ -270,32 +278,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         syncCompactMetrics(for: screen)
         let resolvedSize = store.windowSize
-        let frame = screen.frame
         let leftAuxArea = screen.auxiliaryTopLeftArea ?? .zero
         let rightAuxArea = screen.auxiliaryTopRightArea ?? .zero
         let hasCameraHousing = !leftAuxArea.isEmpty || !rightAuxArea.isEmpty
         let topInset = topInsetForWindow(size: resolvedSize, hasCameraHousing: hasCameraHousing)
-        let origin = CGPoint(
-            x: frame.midX - resolvedSize.width / 2,
-            y: frame.maxY - resolvedSize.height - topInset
+        let targetFrame = screenPlacementCoordinator.centeredFrame(
+            for: screen,
+            windowSize: resolvedSize,
+            topInset: topInset
         )
-        let targetFrame = NSRect(origin: origin, size: resolvedSize)
         updatePanelHoverArming(for: targetFrame)
 
         if animated {
             let isExpanding = targetFrame.height > window.frame.height
             guard isExpanding else {
-                window.setFrame(targetFrame, display: true)
+                windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: false)
                 return
             }
 
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                window.animator().setFrame(targetFrame, display: true)
-            }
+            windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: true)
         } else {
-            window.setFrame(targetFrame, display: true)
+            windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animate: false)
         }
     }
 
@@ -680,7 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var isWindowVisible: Bool {
-        window?.isVisible == true
+        windowCoordinator.isWindowVisible
     }
 
     @objc
@@ -688,11 +691,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let window else { return }
 
         if isWindowVisible {
-            window.orderOut(nil)
+            windowCoordinator.hideWindow()
         } else {
             position(window: window, size: store.windowSize, animated: false)
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
+            windowCoordinator.showWindow()
         }
 
         updateMenuState()
@@ -797,7 +799,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         position(window: window, size: store.windowSize, animated: false, preferMouseScreen: true)
-        window.orderFrontRegardless()
+        windowCoordinator.orderFront()
 
         // AppKit can briefly report the previous screen during a trackpad space
         // transition, so re-anchor once more on the next run loop.
@@ -808,7 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.store.showPanel()
             }
             self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
-            window.orderFrontRegardless()
+            self.windowCoordinator.orderFront()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak window] in
@@ -818,7 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.store.showPanel()
             }
             self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
-            window.orderFrontRegardless()
+            self.windowCoordinator.orderFront()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self, weak window] in
@@ -828,7 +830,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.store.showPanel()
             }
             self.position(window: window, size: self.store.windowSize, animated: false, preferMouseScreen: true)
-            window.orderFrontRegardless()
+            self.windowCoordinator.orderFront()
         }
     }
 
@@ -844,7 +846,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         position(window: window, size: store.windowSize, animated: false)
-        window.orderFrontRegardless()
+        windowCoordinator.orderFront()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

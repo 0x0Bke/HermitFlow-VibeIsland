@@ -29,8 +29,70 @@
 			A1000000000000000000002D /* openai.png in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002E /* openai.png */; };
 			A10000000000000000000041 /* hermit.png in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000042 /* hermit.png */; };
 			A10000000000000000000043 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000044 /* Assets.xcassets */; };
-			A10000000000000000000045 /* NotificationSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000046 /* NotificationSoundPlayer.swift */; };
-			A10000000000000000000047 /* notification-ping.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000048 /* notification-ping.mp3 */; };
+		A10000000000000000000045 /* NotificationSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000046 /* NotificationSoundPlayer.swift */; };
+		A10000000000000000000047 /* notification-ping.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000048 /* notification-ping.mp3 */; };
+		A10000000000000000000080 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000081 /* AppEnvironment.swift */; };
+		A10000000000000000000082 /* AppBootstrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000083 /* AppBootstrapper.swift */; };
+		A10000000000000000000084 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000085 /* Logger.swift */; };
+		A10000000000000000000086 /* FilePaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000087 /* FilePaths.swift */; };
+		A10000000000000000000088 /* ActivitySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000089 /* ActivitySource.swift */; };
+		A1000000000000000000008A /* ApprovalSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000008B /* ApprovalSource.swift */; };
+		A1000000000000000000008C /* UsageSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000008D /* UsageSource.swift */; };
+		A1000000000000000000008E /* HookInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000008F /* HookInstaller.swift */; };
+		A10000000000000000000090 /* FocusRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000091 /* FocusRouting.swift */; };
+		A10000000000000000000092 /* IslandWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000093 /* IslandWindowCoordinator.swift */; };
+		A10000000000000000000094 /* WindowSizingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000095 /* WindowSizingCoordinator.swift */; };
+		A10000000000000000000096 /* ScreenPlacementCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000097 /* ScreenPlacementCoordinator.swift */; };
+		A10000000000000000000098 /* StatusItemCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000099 /* StatusItemCoordinator.swift */; };
+		A1000000000000000000009A /* PollingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000009B /* PollingCoordinator.swift */; };
+		A1000000000000000000009C /* AccessibilityCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000009D /* AccessibilityCoordinator.swift */; };
+		A1000000000000000000009E /* ProgressStoreAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000009F /* ProgressStoreAdapter.swift */; };
+		A100000000000000000000A0 /* SessionStoreAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* SessionStoreAdapter.swift */; };
+		A100000000000000000000B0 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B1 /* AppStore.swift */; };
+		A100000000000000000000B2 /* RuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B3 /* RuntimeStore.swift */; };
+		A100000000000000000000B4 /* PresentationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B5 /* PresentationStore.swift */; };
+			A100000000000000000000B6 /* StoreEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B7 /* StoreEffects.swift */; };
+			A100000000000000000000C0 /* IslandEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000C1 /* IslandEvent.swift */; };
+			A100000000000000000000C2 /* SessionEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000C3 /* SessionEvent.swift */; };
+			A100000000000000000000C4 /* ApprovalEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000C5 /* ApprovalEvent.swift */; };
+			A100000000000000000000C6 /* DiagnosticsEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000C7 /* DiagnosticsEvent.swift */; };
+			A100000000000000000000C8 /* SessionReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000C9 /* SessionReducer.swift */; };
+			A100000000000000000000CA /* ApprovalReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000CB /* ApprovalReducer.swift */; };
+			A100000000000000000000CC /* RuntimeReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000CD /* RuntimeReducer.swift */; };
+			A100000000000000000000CE /* ActivitySnapshotMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000CF /* ActivitySnapshotMerger.swift */; };
+			A100000000000000000000D0 /* ApprovalRequestMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000D1 /* ApprovalRequestMerger.swift */; };
+			A100000000000000000000D2 /* ActivitySnapshotEventAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000D3 /* ActivitySnapshotEventAdapter.swift */; };
+			A100000000000000000000E0 /* ApprovalState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E1 /* ApprovalState.swift */; };
+			A100000000000000000000E2 /* ApprovalDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E3 /* ApprovalDiagnostic.swift */; };
+			A100000000000000000000E4 /* ApprovalExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E5 /* ApprovalExecutor.swift */; };
+			A100000000000000000000E6 /* AccessibilityApprovalExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E7 /* AccessibilityApprovalExecutor.swift */; };
+			A100000000000000000000E8 /* HTTPHookApprovalExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E9 /* HTTPHookApprovalExecutor.swift */; };
+			A100000000000000000000EA /* ApprovalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000EB /* ApprovalPanelView.swift */; };
+			A100000000000000000000EC /* ApprovalInlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000ED /* ApprovalInlineView.swift */; };
+			A100000000000000000000F2 /* ClaudeUsageSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F3 /* ClaudeUsageSnapshot.swift */; };
+			A100000000000000000000F4 /* CodexUsageSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F5 /* CodexUsageSnapshot.swift */; };
+			A100000000000000000000F6 /* UsageProviderState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F7 /* UsageProviderState.swift */; };
+			A100000000000000000000F8 /* ClaudeUsageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F9 /* ClaudeUsageLoader.swift */; };
+			A100000000000000000000FA /* CodexUsageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000FB /* CodexUsageLoader.swift */; };
+			A100000000000000000000FC /* UsageSummaryFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000FD /* UsageSummaryFormatter.swift */; };
+			A10000000000000000000100 /* ClaudeUsageSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000101 /* ClaudeUsageSource.swift */; };
+			A10000000000000000000102 /* CodexRolloutUsageSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000103 /* CodexRolloutUsageSource.swift */; };
+			A10000000000000000000104 /* UsageSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000105 /* UsageSummaryView.swift */; };
+			A10000000000000000000106 /* ClaudeUsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000107 /* ClaudeUsageCardView.swift */; };
+			A10000000000000000000108 /* CodexUsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000109 /* CodexUsageCardView.swift */; };
+			A10000000000000000000110 /* DiagnosticIssue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000111 /* DiagnosticIssue.swift */; };
+			A10000000000000000000112 /* SourceHealthReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000113 /* SourceHealthReport.swift */; };
+			A10000000000000000000114 /* SourceErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000115 /* SourceErrorMapper.swift */; };
+			A10000000000000000000116 /* DiagnosticsFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000117 /* DiagnosticsFormatter.swift */; };
+			A10000000000000000000118 /* ClaudeHTTPCallbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000119 /* ClaudeHTTPCallbackServer.swift */; };
+			A1000000000000000000011A /* ClaudeHookInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000011B /* ClaudeHookInstaller.swift */; };
+			A1000000000000000000011C /* ClaudeHookHealthChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000011D /* ClaudeHookHealthChecker.swift */; };
+			A1000000000000000000011E /* ClaudeHookBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000011F /* ClaudeHookBootstrap.swift */; };
+			A10000000000000000000120 /* CodexSQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000121 /* CodexSQLiteReader.swift */; };
+			A10000000000000000000122 /* CodexSessionReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000123 /* CodexSessionReader.swift */; };
+			A10000000000000000000124 /* CodexLogReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000125 /* CodexLogReader.swift */; };
+			A10000000000000000000126 /* CodexHookSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000127 /* CodexHookSource.swift */; };
+			A10000000000000000000128 /* DiagnosticsCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000129 /* DiagnosticsCardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +122,68 @@
 			A10000000000000000000044 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			A10000000000000000000046 /* NotificationSoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSoundPlayer.swift; sourceTree = "<group>"; };
 			A10000000000000000000048 /* notification-ping.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "notification-ping.mp3"; sourceTree = "<group>"; };
+		A10000000000000000000081 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		A10000000000000000000083 /* AppBootstrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBootstrapper.swift; sourceTree = "<group>"; };
+		A10000000000000000000085 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		A10000000000000000000087 /* FilePaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePaths.swift; sourceTree = "<group>"; };
+		A10000000000000000000089 /* ActivitySource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySource.swift; sourceTree = "<group>"; };
+		A1000000000000000000008B /* ApprovalSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalSource.swift; sourceTree = "<group>"; };
+		A1000000000000000000008D /* UsageSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSource.swift; sourceTree = "<group>"; };
+		A1000000000000000000008F /* HookInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HookInstaller.swift; sourceTree = "<group>"; };
+		A10000000000000000000091 /* FocusRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusRouting.swift; sourceTree = "<group>"; };
+		A10000000000000000000093 /* IslandWindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IslandWindowCoordinator.swift; sourceTree = "<group>"; };
+		A10000000000000000000095 /* WindowSizingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSizingCoordinator.swift; sourceTree = "<group>"; };
+		A10000000000000000000097 /* ScreenPlacementCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenPlacementCoordinator.swift; sourceTree = "<group>"; };
+		A10000000000000000000099 /* StatusItemCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemCoordinator.swift; sourceTree = "<group>"; };
+		A1000000000000000000009B /* PollingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PollingCoordinator.swift; sourceTree = "<group>"; };
+		A1000000000000000000009D /* AccessibilityCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityCoordinator.swift; sourceTree = "<group>"; };
+		A1000000000000000000009F /* ProgressStoreAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressStoreAdapter.swift; sourceTree = "<group>"; };
+		A100000000000000000000A1 /* SessionStoreAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreAdapter.swift; sourceTree = "<group>"; };
+		A100000000000000000000B1 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		A100000000000000000000B3 /* RuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeStore.swift; sourceTree = "<group>"; };
+		A100000000000000000000B5 /* PresentationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationStore.swift; sourceTree = "<group>"; };
+			A100000000000000000000B7 /* StoreEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreEffects.swift; sourceTree = "<group>"; };
+			A100000000000000000000C1 /* IslandEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IslandEvent.swift; sourceTree = "<group>"; };
+			A100000000000000000000C3 /* SessionEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEvent.swift; sourceTree = "<group>"; };
+			A100000000000000000000C5 /* ApprovalEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalEvent.swift; sourceTree = "<group>"; };
+			A100000000000000000000C7 /* DiagnosticsEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsEvent.swift; sourceTree = "<group>"; };
+			A100000000000000000000C9 /* SessionReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionReducer.swift; sourceTree = "<group>"; };
+			A100000000000000000000CB /* ApprovalReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalReducer.swift; sourceTree = "<group>"; };
+			A100000000000000000000CD /* RuntimeReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeReducer.swift; sourceTree = "<group>"; };
+			A100000000000000000000CF /* ActivitySnapshotMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySnapshotMerger.swift; sourceTree = "<group>"; };
+			A100000000000000000000D1 /* ApprovalRequestMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalRequestMerger.swift; sourceTree = "<group>"; };
+			A100000000000000000000D3 /* ActivitySnapshotEventAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySnapshotEventAdapter.swift; sourceTree = "<group>"; };
+			A100000000000000000000E1 /* ApprovalState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalState.swift; sourceTree = "<group>"; };
+			A100000000000000000000E3 /* ApprovalDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalDiagnostic.swift; sourceTree = "<group>"; };
+			A100000000000000000000E5 /* ApprovalExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalExecutor.swift; sourceTree = "<group>"; };
+			A100000000000000000000E7 /* AccessibilityApprovalExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityApprovalExecutor.swift; sourceTree = "<group>"; };
+			A100000000000000000000E9 /* HTTPHookApprovalExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPHookApprovalExecutor.swift; sourceTree = "<group>"; };
+			A100000000000000000000EB /* ApprovalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalPanelView.swift; sourceTree = "<group>"; };
+			A100000000000000000000ED /* ApprovalInlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalInlineView.swift; sourceTree = "<group>"; };
+			A100000000000000000000F3 /* ClaudeUsageSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageSnapshot.swift; sourceTree = "<group>"; };
+			A100000000000000000000F5 /* CodexUsageSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageSnapshot.swift; sourceTree = "<group>"; };
+			A100000000000000000000F7 /* UsageProviderState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageProviderState.swift; sourceTree = "<group>"; };
+			A100000000000000000000F9 /* ClaudeUsageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageLoader.swift; sourceTree = "<group>"; };
+			A100000000000000000000FB /* CodexUsageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageLoader.swift; sourceTree = "<group>"; };
+			A100000000000000000000FD /* UsageSummaryFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSummaryFormatter.swift; sourceTree = "<group>"; };
+			A10000000000000000000101 /* ClaudeUsageSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageSource.swift; sourceTree = "<group>"; };
+			A10000000000000000000103 /* CodexRolloutUsageSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRolloutUsageSource.swift; sourceTree = "<group>"; };
+			A10000000000000000000105 /* UsageSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSummaryView.swift; sourceTree = "<group>"; };
+			A10000000000000000000107 /* ClaudeUsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageCardView.swift; sourceTree = "<group>"; };
+			A10000000000000000000109 /* CodexUsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageCardView.swift; sourceTree = "<group>"; };
+			A10000000000000000000111 /* DiagnosticIssue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticIssue.swift; sourceTree = "<group>"; };
+			A10000000000000000000113 /* SourceHealthReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceHealthReport.swift; sourceTree = "<group>"; };
+			A10000000000000000000115 /* SourceErrorMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceErrorMapper.swift; sourceTree = "<group>"; };
+			A10000000000000000000117 /* DiagnosticsFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsFormatter.swift; sourceTree = "<group>"; };
+			A10000000000000000000119 /* ClaudeHTTPCallbackServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHTTPCallbackServer.swift; sourceTree = "<group>"; };
+			A1000000000000000000011B /* ClaudeHookInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHookInstaller.swift; sourceTree = "<group>"; };
+			A1000000000000000000011D /* ClaudeHookHealthChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHookHealthChecker.swift; sourceTree = "<group>"; };
+			A1000000000000000000011F /* ClaudeHookBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHookBootstrap.swift; sourceTree = "<group>"; };
+			A10000000000000000000121 /* CodexSQLiteReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSQLiteReader.swift; sourceTree = "<group>"; };
+			A10000000000000000000123 /* CodexSessionReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSessionReader.swift; sourceTree = "<group>"; };
+			A10000000000000000000125 /* CodexLogReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexLogReader.swift; sourceTree = "<group>"; };
+			A10000000000000000000127 /* CodexHookSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookSource.swift; sourceTree = "<group>"; };
+			A10000000000000000000129 /* DiagnosticsCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsCardView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +211,11 @@
 					A10000000000000000000001 /* HermitFlowApp.swift */,
 					A10000000000000000000002 /* AppDelegate.swift */,
 					A10000000000000000000044 /* Assets.xcassets */,
+					A100000000000000000000A2 /* App */,
+					A100000000000000000000A3 /* Core */,
+					A100000000000000000000A6 /* Coordinators */,
+					A100000000000000000000AA /* Legacy */,
+					A100000000000000000000B8 /* State */,
 					A10000000000000000000033 /* Models */,
 				A10000000000000000000034 /* Stores */,
 				A10000000000000000000037 /* Sources */,
@@ -125,13 +254,16 @@
 			path = Stores;
 			sourceTree = "<group>";
 		};
-		A10000000000000000000035 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				A10000000000000000000005 /* IslandRootView.swift */,
-			);
-			path = Views;
-			sourceTree = "<group>";
+			A10000000000000000000035 /* Views */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000EE /* Approval */,
+					A1000000000000000000012A /* Diagnostics */,
+					A1000000000000000000010A /* Usage */,
+					A10000000000000000000005 /* IslandRootView.swift */,
+				);
+				path = Views;
+				sourceTree = "<group>";
 		};
 			A10000000000000000000036 /* Resources */ = {
 				isa = PBXGroup;
@@ -149,26 +281,288 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		A10000000000000000000037 /* Sources */ = {
-			isa = PBXGroup;
-			children = (
-				A10000000000000000000017 /* LocalCodexSource.swift */,
-				A10000000000000000000010 /* ProgressSources.swift */,
-			);
-			path = Sources;
-			sourceTree = "<group>";
-		};
-		A10000000000000000000038 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				A10000000000000000000026 /* AccessibilityPermissionMonitor.swift */,
-				A10000000000000000000024 /* FocusLauncher.swift */,
-				A10000000000000000000046 /* NotificationSoundPlayer.swift */,
-				A1000000000000000000000F /* FocusRouter.swift */,
+			A10000000000000000000037 /* Sources */ = {
+				isa = PBXGroup;
+				children = (
+					A1000000000000000000010B /* Claude */,
+					A1000000000000000000010C /* Codex */,
+					A10000000000000000000017 /* LocalCodexSource.swift */,
+					A10000000000000000000010 /* ProgressSources.swift */,
+					A100000000000000000000D6 /* Shared */,
+				);
+				path = Sources;
+				sourceTree = "<group>";
+			};
+			A10000000000000000000038 /* Services */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000F0 /* Approval */,
+					A1000000000000000000012B /* Diagnostics */,
+					A1000000000000000000010D /* Usage */,
+					A10000000000000000000026 /* AccessibilityPermissionMonitor.swift */,
+					A10000000000000000000024 /* FocusLauncher.swift */,
+					A10000000000000000000046 /* NotificationSoundPlayer.swift */,
+					A1000000000000000000000F /* FocusRouter.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
 		};
+		A100000000000000000000A2 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000081 /* AppEnvironment.swift */,
+				A10000000000000000000083 /* AppBootstrapper.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+			A100000000000000000000A3 /* Core */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000A4 /* Utilities */,
+					A100000000000000000000A5 /* Protocols */,
+					A100000000000000000000EF /* Models */,
+					A100000000000000000000D4 /* Events */,
+					A100000000000000000000D5 /* Reducers */,
+				);
+				path = Core;
+				sourceTree = "<group>";
+			};
+		A100000000000000000000A4 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000085 /* Logger.swift */,
+				A10000000000000000000087 /* FilePaths.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000A5 /* Protocols */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000089 /* ActivitySource.swift */,
+				A1000000000000000000008B /* ApprovalSource.swift */,
+				A1000000000000000000008D /* UsageSource.swift */,
+				A1000000000000000000008F /* HookInstaller.swift */,
+				A10000000000000000000091 /* FocusRouting.swift */,
+			);
+			path = Protocols;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000A6 /* Coordinators */ = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000A7 /* Window */,
+				A100000000000000000000A8 /* MenuBar */,
+				A100000000000000000000A9 /* Monitoring */,
+			);
+			path = Coordinators;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000A7 /* Window */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000093 /* IslandWindowCoordinator.swift */,
+				A10000000000000000000095 /* WindowSizingCoordinator.swift */,
+				A10000000000000000000097 /* ScreenPlacementCoordinator.swift */,
+			);
+			path = Window;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000A8 /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000099 /* StatusItemCoordinator.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000A9 /* Monitoring */ = {
+			isa = PBXGroup;
+			children = (
+				A1000000000000000000009B /* PollingCoordinator.swift */,
+				A1000000000000000000009D /* AccessibilityCoordinator.swift */,
+			);
+			path = Monitoring;
+			sourceTree = "<group>";
+		};
+		A100000000000000000000AA /* Legacy */ = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000AB /* CompatibilityAdapters */,
+			);
+			path = Legacy;
+			sourceTree = "<group>";
+		};
+			A100000000000000000000AB /* CompatibilityAdapters */ = {
+				isa = PBXGroup;
+				children = (
+					A1000000000000000000009F /* ProgressStoreAdapter.swift */,
+					A100000000000000000000A1 /* SessionStoreAdapter.swift */,
+					A100000000000000000000D3 /* ActivitySnapshotEventAdapter.swift */,
+				);
+				path = CompatibilityAdapters;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000B8 /* State */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000B1 /* AppStore.swift */,
+					A100000000000000000000B3 /* RuntimeStore.swift */,
+					A100000000000000000000B5 /* PresentationStore.swift */,
+					A100000000000000000000B7 /* StoreEffects.swift */,
+				);
+				path = State;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000D4 /* Events */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000C1 /* IslandEvent.swift */,
+					A100000000000000000000C3 /* SessionEvent.swift */,
+					A100000000000000000000C5 /* ApprovalEvent.swift */,
+					A100000000000000000000C7 /* DiagnosticsEvent.swift */,
+				);
+				path = Events;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000D5 /* Reducers */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000C9 /* SessionReducer.swift */,
+					A100000000000000000000CB /* ApprovalReducer.swift */,
+					A100000000000000000000CD /* RuntimeReducer.swift */,
+				);
+				path = Reducers;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000D6 /* Shared */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000CF /* ActivitySnapshotMerger.swift */,
+					A100000000000000000000D1 /* ApprovalRequestMerger.swift */,
+					A10000000000000000000115 /* SourceErrorMapper.swift */,
+				);
+				path = Shared;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000EE /* Approval */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000EB /* ApprovalPanelView.swift */,
+					A100000000000000000000ED /* ApprovalInlineView.swift */,
+				);
+				path = Approval;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000EF /* Models */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000F1 /* Approval */,
+					A1000000000000000000012C /* Diagnostics */,
+					A1000000000000000000010E /* Usage */,
+				);
+				path = Models;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000F0 /* Approval */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000E5 /* ApprovalExecutor.swift */,
+					A100000000000000000000E7 /* AccessibilityApprovalExecutor.swift */,
+					A100000000000000000000E9 /* HTTPHookApprovalExecutor.swift */,
+				);
+				path = Approval;
+				sourceTree = "<group>";
+			};
+			A100000000000000000000F1 /* Approval */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000E1 /* ApprovalState.swift */,
+					A100000000000000000000E3 /* ApprovalDiagnostic.swift */,
+				);
+				path = Approval;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000010A /* Usage */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000105 /* UsageSummaryView.swift */,
+					A10000000000000000000107 /* ClaudeUsageCardView.swift */,
+					A10000000000000000000109 /* CodexUsageCardView.swift */,
+				);
+				path = Usage;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000010B /* Claude */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000101 /* ClaudeUsageSource.swift */,
+					A10000000000000000000119 /* ClaudeHTTPCallbackServer.swift */,
+					A1000000000000000000011B /* ClaudeHookInstaller.swift */,
+					A1000000000000000000011D /* ClaudeHookHealthChecker.swift */,
+					A1000000000000000000011F /* ClaudeHookBootstrap.swift */,
+				);
+				path = Claude;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000010C /* Codex */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000103 /* CodexRolloutUsageSource.swift */,
+					A10000000000000000000121 /* CodexSQLiteReader.swift */,
+					A10000000000000000000123 /* CodexSessionReader.swift */,
+					A10000000000000000000125 /* CodexLogReader.swift */,
+					A10000000000000000000127 /* CodexHookSource.swift */,
+				);
+				path = Codex;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000010D /* Usage */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000F9 /* ClaudeUsageLoader.swift */,
+					A100000000000000000000FB /* CodexUsageLoader.swift */,
+					A100000000000000000000FD /* UsageSummaryFormatter.swift */,
+				);
+				path = Usage;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000010E /* Usage */ = {
+				isa = PBXGroup;
+				children = (
+					A100000000000000000000F3 /* ClaudeUsageSnapshot.swift */,
+					A100000000000000000000F5 /* CodexUsageSnapshot.swift */,
+					A100000000000000000000F7 /* UsageProviderState.swift */,
+				);
+				path = Usage;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000012A /* Diagnostics */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000129 /* DiagnosticsCardView.swift */,
+				);
+				path = Diagnostics;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000012B /* Diagnostics */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000117 /* DiagnosticsFormatter.swift */,
+				);
+				path = Diagnostics;
+				sourceTree = "<group>";
+			};
+			A1000000000000000000012C /* Diagnostics */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000111 /* DiagnosticIssue.swift */,
+					A10000000000000000000113 /* SourceHealthReport.swift */,
+				);
+				path = Diagnostics;
+				sourceTree = "<group>";
+			};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -261,7 +655,69 @@
 				A10000000000000000000023 /* FocusLauncher.swift in Sources */,
 				A10000000000000000000025 /* AccessibilityPermissionMonitor.swift in Sources */,
 				A10000000000000000000045 /* NotificationSoundPlayer.swift in Sources */,
-			);
+				A10000000000000000000080 /* AppEnvironment.swift in Sources */,
+				A10000000000000000000082 /* AppBootstrapper.swift in Sources */,
+				A10000000000000000000084 /* Logger.swift in Sources */,
+				A10000000000000000000086 /* FilePaths.swift in Sources */,
+				A10000000000000000000088 /* ActivitySource.swift in Sources */,
+				A1000000000000000000008A /* ApprovalSource.swift in Sources */,
+				A1000000000000000000008C /* UsageSource.swift in Sources */,
+				A1000000000000000000008E /* HookInstaller.swift in Sources */,
+				A10000000000000000000090 /* FocusRouting.swift in Sources */,
+				A10000000000000000000092 /* IslandWindowCoordinator.swift in Sources */,
+				A10000000000000000000094 /* WindowSizingCoordinator.swift in Sources */,
+				A10000000000000000000096 /* ScreenPlacementCoordinator.swift in Sources */,
+				A10000000000000000000098 /* StatusItemCoordinator.swift in Sources */,
+				A1000000000000000000009A /* PollingCoordinator.swift in Sources */,
+				A1000000000000000000009C /* AccessibilityCoordinator.swift in Sources */,
+				A1000000000000000000009E /* ProgressStoreAdapter.swift in Sources */,
+				A100000000000000000000A0 /* SessionStoreAdapter.swift in Sources */,
+					A100000000000000000000B0 /* AppStore.swift in Sources */,
+					A100000000000000000000B2 /* RuntimeStore.swift in Sources */,
+					A100000000000000000000B4 /* PresentationStore.swift in Sources */,
+					A100000000000000000000B6 /* StoreEffects.swift in Sources */,
+					A100000000000000000000C0 /* IslandEvent.swift in Sources */,
+					A100000000000000000000C2 /* SessionEvent.swift in Sources */,
+					A100000000000000000000C4 /* ApprovalEvent.swift in Sources */,
+					A100000000000000000000C6 /* DiagnosticsEvent.swift in Sources */,
+					A100000000000000000000C8 /* SessionReducer.swift in Sources */,
+					A100000000000000000000CA /* ApprovalReducer.swift in Sources */,
+					A100000000000000000000CC /* RuntimeReducer.swift in Sources */,
+					A100000000000000000000CE /* ActivitySnapshotMerger.swift in Sources */,
+					A100000000000000000000D0 /* ApprovalRequestMerger.swift in Sources */,
+					A100000000000000000000D2 /* ActivitySnapshotEventAdapter.swift in Sources */,
+					A100000000000000000000E0 /* ApprovalState.swift in Sources */,
+					A100000000000000000000E2 /* ApprovalDiagnostic.swift in Sources */,
+					A100000000000000000000E4 /* ApprovalExecutor.swift in Sources */,
+				A100000000000000000000E6 /* AccessibilityApprovalExecutor.swift in Sources */,
+				A100000000000000000000E8 /* HTTPHookApprovalExecutor.swift in Sources */,
+				A100000000000000000000EA /* ApprovalPanelView.swift in Sources */,
+				A100000000000000000000EC /* ApprovalInlineView.swift in Sources */,
+				A100000000000000000000F2 /* ClaudeUsageSnapshot.swift in Sources */,
+				A100000000000000000000F4 /* CodexUsageSnapshot.swift in Sources */,
+				A100000000000000000000F6 /* UsageProviderState.swift in Sources */,
+				A100000000000000000000F8 /* ClaudeUsageLoader.swift in Sources */,
+				A100000000000000000000FA /* CodexUsageLoader.swift in Sources */,
+				A100000000000000000000FC /* UsageSummaryFormatter.swift in Sources */,
+				A10000000000000000000100 /* ClaudeUsageSource.swift in Sources */,
+				A10000000000000000000102 /* CodexRolloutUsageSource.swift in Sources */,
+				A10000000000000000000104 /* UsageSummaryView.swift in Sources */,
+				A10000000000000000000106 /* ClaudeUsageCardView.swift in Sources */,
+				A10000000000000000000108 /* CodexUsageCardView.swift in Sources */,
+				A10000000000000000000110 /* DiagnosticIssue.swift in Sources */,
+				A10000000000000000000112 /* SourceHealthReport.swift in Sources */,
+				A10000000000000000000114 /* SourceErrorMapper.swift in Sources */,
+				A10000000000000000000116 /* DiagnosticsFormatter.swift in Sources */,
+				A10000000000000000000118 /* ClaudeHTTPCallbackServer.swift in Sources */,
+				A1000000000000000000011A /* ClaudeHookInstaller.swift in Sources */,
+				A1000000000000000000011C /* ClaudeHookHealthChecker.swift in Sources */,
+				A1000000000000000000011E /* ClaudeHookBootstrap.swift in Sources */,
+				A10000000000000000000120 /* CodexSQLiteReader.swift in Sources */,
+				A10000000000000000000122 /* CodexSessionReader.swift in Sources */,
+				A10000000000000000000124 /* CodexLogReader.swift in Sources */,
+				A10000000000000000000126 /* CodexHookSource.swift in Sources */,
+				A10000000000000000000128 /* DiagnosticsCardView.swift in Sources */,
+				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

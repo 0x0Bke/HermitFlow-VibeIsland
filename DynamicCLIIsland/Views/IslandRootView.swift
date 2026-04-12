@@ -60,7 +60,15 @@ struct IslandRootView: View {
     }
 
     private var backgroundFill: Color {
-        store.isHiddenMode ? Color.black.opacity(0.001) : .black
+        if store.isHiddenMode {
+            return Color.black.opacity(0.001)
+        }
+
+        if store.displayMode == .panel {
+            return Color.black
+        }
+
+        return .black
     }
 
     private var borderColor: Color {
@@ -84,141 +92,15 @@ struct IslandRootView: View {
 
 
     private func inlineApprovalBody(_ request: ApprovalRequest) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            islandHeader
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color(red: 0.23, green: 0.51, blue: 0.95))
-
-                    Text("Approval Needed")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-
-                    Spacer(minLength: 8)
-
-                    Button(action: store.collapseInlineApproval) {
-                        Text("Hide")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.7))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                    .frame(height: 1)
-                    .padding(.bottom, 12)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Image(systemName: "terminal")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Color(red: 0.63, green: 0.63, blue: 0.67))
-
-                        Text("Session:")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(Color(red: 0.44, green: 0.44, blue: 0.48))
-
-                        Text(approvalSessionTitle(for: request))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-
-                        Spacer(minLength: 8)
-
-                        approvalSourcePill(for: request.source)
-                    }
-
-                    Text(approvalPrimaryTitle(for: request))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Command")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Color(red: 0.44, green: 0.44, blue: 0.48))
-
-                        Text(request.commandSummary.isEmpty ? "Waiting for command detail" : request.commandSummary)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.black.opacity(0.4))
-                    )
-
-                    Text(relativeTimestamp(for: request.createdAt))
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundStyle(Color(red: 0.44, green: 0.44, blue: 0.48))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                )
-                .padding(.bottom, 12)
-
-                HStack(spacing: 8) {
-                    approvalDecisionButton(
-                        title: "Deny",
-                        systemImage: "xmark",
-                        titleColor: Color(red: 1.0, green: 0.42, blue: 0.42),
-                        background: Color.white.opacity(0.08),
-                        border: Color.white.opacity(0.08),
-                        borderWidth: 1
-                    ) {
-                        store.rejectApproval()
-                    }
-
-                    approvalDecisionButton(
-                        title: "Allow Once",
-                        systemImage: "checkmark",
-                        titleColor: .white,
-                        background: Color(red: 0.13, green: 0.77, blue: 0.37)
-                    ) {
-                        store.acceptApproval()
-                    }
-
-                    approvalDecisionButton(
-                        title: "Always Allow",
-                        systemImage: "checkmark.circle",
-                        titleColor: Color(red: 0.63, green: 0.63, blue: 0.67),
-                        iconColor: Color(red: 0.13, green: 0.77, blue: 0.37),
-                        background: Color.white.opacity(0.06),
-                        border: Color.white.opacity(0.09),
-                        borderWidth: 1
-                    ) {
-                        store.acceptAllApprovals()
-                    }
-                }
-
-                if let approvalDiagnosticMessage = store.approvalDiagnosticMessage {
-                    approvalDiagnosticCallout(approvalDiagnosticMessage, compact: true)
-                        .padding(.top, 10)
-                }
-            }
-            .padding(.horizontal, 36)
-            .padding(.top, 12)
-        }
-        .padding(.bottom, 14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        ApprovalInlineView(
+            store: store,
+            request: request,
+            header: AnyView(islandHeader),
+            sessionTitle: approvalSessionTitle(for: request),
+            primaryTitle: approvalPrimaryTitle(for: request),
+            timestampText: relativeTimestamp(for: request.createdAt),
+            diagnosticMessage: store.approvalDiagnosticMessage
+        )
     }
 
     private var islandHeader: some View {
@@ -249,12 +131,16 @@ struct IslandRootView: View {
             VStack(alignment: .leading, spacing: 10) {
                 panelTopBar
 
-                if !store.sessions.isEmpty {
+                if !store.sessions.isEmpty || store.hasUsageContent {
                     sessionsSection
                 }
 
                 if let accessibilityPermissionMessage = store.accessibilityPermissionMessage {
                     accessibilityPermissionCard(message: accessibilityPermissionMessage)
+                }
+
+                if !store.sourceHealthReports.isEmpty {
+                    DiagnosticsCardView(reports: store.sourceHealthReports)
                 }
 
                 if let errorMessage = store.errorMessage {
@@ -369,15 +255,6 @@ private extension IslandRootView {
         .help(store.isSoundMuted ? "Unmute notifications" : "Mute notifications")
     }
 
-    var usageSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(providerUsageRows) { row in
-                usageRow(row)
-            }
-        }
-        .padding(.bottom, 2)
-    }
-
     var sessionsSectionDivider: some View {
         Rectangle()
             .fill(Color.white.opacity(0.2))
@@ -402,155 +279,130 @@ private extension IslandRootView {
 
     var sessionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            usageSection
-            sessionsSectionDivider
-            sessionsSectionHeader
+            if store.hasUsageContent {
+                usageBlock
+                sessionsSectionDivider
+            }
+
+            if !store.sessions.isEmpty {
+                sessionsSectionHeader
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.94),
-                            Color(red: 0.08, green: 0.09, blue: 0.11).opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(panelCardGradient)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                .stroke(panelCardStroke, lineWidth: 1)
         )
+    }
+
+    var usageBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let claudeUsageSnapshot = store.claudeUsageSnapshot, !claudeUsageSnapshot.isEmpty {
+                usageProviderRow(
+                    title: claudeUsageTitle(for: claudeUsageSnapshot),
+                    shortLabel: "5h",
+                    shortValue: claudeUsageSnapshot.fiveHour?.leftPercentage,
+                    longLabel: "wk",
+                    longValue: claudeUsageSnapshot.sevenDay?.leftPercentage
+                )
+            }
+
+            if let codexUsageSnapshot = store.codexUsageSnapshot, !codexUsageSnapshot.isEmpty {
+                usageProviderRow(
+                    title: "Codex",
+                    shortLabel: "5h",
+                    shortValue: codexWindow(minutes: 300, in: codexUsageSnapshot)?.leftPercentage,
+                    longLabel: "wk",
+                    longValue: codexWindow(minutes: 10_080, in: codexUsageSnapshot)?.leftPercentage
+                )
+            }
+        }
+    }
+
+    func usageProviderRow(
+        title: String,
+        shortLabel: String,
+        shortValue: Double?,
+        longLabel: String,
+        longValue: Double?
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.78))
+                .frame(width: 108, alignment: .leading)
+
+            usageMetricChip(label: shortLabel, value: shortValue)
+            usageMetricChip(label: longLabel, value: longValue)
+        }
+    }
+
+    func claudeUsageTitle(for snapshot: ClaudeUsageSnapshot) -> String {
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            return "Claude · \(providerDisplayName)"
+        }
+
+        return "Claude"
+    }
+
+    func usageMetricChip(label: String, value: Double?) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.52))
+                .frame(width: 18, alignment: .leading)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+
+                    Capsule(style: .continuous)
+                        .fill(Color(red: 0.32, green: 0.96, blue: 0.38))
+                        .frame(width: progressWidth(totalWidth: proxy.size.width, value: value))
+                }
+            }
+            .frame(width: 56, height: 5)
+
+            Text(value.map { "\((min(max($0, 0), 1) * 100).rounded(.toNearestOrAwayFromZero).formatted(.number.precision(.fractionLength(0))))%" } ?? "--")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 34, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func progressWidth(totalWidth: CGFloat, value: Double?) -> CGFloat {
+        guard let value else {
+            return 0
+        }
+
+        let normalized = min(max(value, 0), 1)
+        if normalized == 0 {
+            return 0
+        }
+
+        return max(totalWidth * normalized, 4)
+    }
+
+    func codexWindow(minutes: Int, in snapshot: CodexUsageSnapshot) -> CodexUsageWindow? {
+        snapshot.windows.first { $0.windowMinutes == minutes }
     }
 
     func approvalCard(_ request: ApprovalRequest) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "bolt.badge.clock")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.48, green: 0.84, blue: 0.99))
-
-                        Text("Approval Request")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-
-                        pendingApprovalBadge
-                    }
-
-                    HStack(alignment: .center, spacing: 8) {
-                        approvalSourcePill(for: request.source)
-
-                        Text(approvalSessionTitle(for: request))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.68))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                Text(relativeTimestamp(for: request.createdAt))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.48))
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(approvalPrimaryTitle(for: request))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                approvalSectionBlock(
-                    title: "Command",
-                    systemImage: "terminal",
-                    tint: Color(red: 0.48, green: 0.84, blue: 0.99),
-                    background: Color.black.opacity(0.5)
-                ) {
-                    Text(request.commandSummary.isEmpty ? "Waiting for command detail" : request.commandSummary)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .lineLimit(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let rationale = request.rationale, !rationale.isEmpty {
-                    approvalSectionBlock(
-                        title: "Reason",
-                        systemImage: "text.alignleft",
-                        tint: Color(red: 0.99, green: 0.80, blue: 0.46),
-                        background: Color.white.opacity(0.05)
-                    ) {
-                        Text(rationale)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.76))
-                            .lineLimit(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-
-            if let approvalDiagnosticMessage = store.approvalDiagnosticMessage {
-                approvalDiagnosticCallout(approvalDiagnosticMessage, compact: false)
-            }
-
-            if let focusTarget = request.focusTarget {
-                HStack(alignment: .center, spacing: 10) {
-                    approvalMetaChip(
-                        systemImage: "macwindow",
-                        text: "Target: \(focusTarget.displayName)"
-                    )
-
-                    Spacer(minLength: 8)
-
-                    panelActionButton(title: "Bring Forward") {
-                        store.bringForward(focusTarget)
-                    }
-                }
-            }
-
-            Text("Awaiting action in the active CLI session. Return to Claude Code or Codex to allow, deny, or allow all.")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.54))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.14, green: 0.18, blue: 0.26).opacity(0.98),
-                            Color(red: 0.09, green: 0.12, blue: 0.18).opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        ApprovalPanelView(
+            store: store,
+            request: request,
+            sessionTitle: approvalSessionTitle(for: request),
+            primaryTitle: approvalPrimaryTitle(for: request),
+            timestampText: relativeTimestamp(for: request.createdAt),
+            diagnosticMessage: store.approvalDiagnosticMessage
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(red: 0.33, green: 0.78, blue: 0.95).opacity(0.26), lineWidth: 1)
-        )
-    }
-
-    var pendingApprovalBadge: some View {
-        Text("Pending")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Color(red: 0.33, green: 0.78, blue: 0.95))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color(red: 0.33, green: 0.78, blue: 0.95).opacity(0.14))
-            )
     }
 
     func sessionCard(_ session: AgentSessionSnapshot) -> some View {
@@ -601,8 +453,8 @@ private extension IslandRootView {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(red: 0.17, green: 0.18, blue: 0.21).opacity(0.96),
-                            Color(red: 0.12, green: 0.13, blue: 0.16).opacity(0.94)
+                            Color(red: 0.08, green: 0.09, blue: 0.10).opacity(0.98),
+                            Color(red: 0.04, green: 0.05, blue: 0.06).opacity(0.96)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -611,7 +463,7 @@ private extension IslandRootView {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.20), lineWidth: 1)
         )
     }
 
@@ -635,11 +487,11 @@ private extension IslandRootView {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.04))
+                .fill(panelSecondaryFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.04), lineWidth: 1)
+                .stroke(panelSecondaryStroke, lineWidth: 1)
         )
     }
 
@@ -687,7 +539,17 @@ private extension IslandRootView {
             .background(
                 Capsule(style: .continuous)
                     .fill(tone.background)
-            )
+        )
+    }
+
+    func focusArrowButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.plain)
     }
 
     func panelActionButton(title: String, action: @escaping () -> Void) -> some View {
@@ -699,7 +561,11 @@ private extension IslandRootView {
                 .padding(.vertical, 6)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.12))
+                        .fill(Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.14))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.22), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -737,109 +603,6 @@ private extension IslandRootView {
         )
     }
 
-    func approvalMetaChip(systemImage: String, text: String) -> some View {
-        HStack(alignment: .center, spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.52))
-
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.64))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
-    }
-
-    func focusArrowButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.up.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.72))
-                .frame(width: 18, height: 18)
-        }
-        .buttonStyle(.plain)
-    }
-
-    func approvalActionButton(
-        title: String,
-        fill: Color,
-        isFullWidth: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(fill)
-                )
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: isFullWidth ? .infinity : nil)
-    }
-
-    func approvalDecisionButton(
-        title: String,
-        systemImage: String,
-        titleColor: Color,
-        iconColor: Color? = nil,
-        background: Color,
-        border: Color = .clear,
-        borderWidth: CGFloat = 0,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(alignment: .center, spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(iconColor ?? titleColor)
-
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(titleColor)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(background)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(border, lineWidth: borderWidth)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    func approvalDiagnosticCallout(_ message: String, compact: Bool) -> some View {
-        Text(message)
-            .font(.system(size: compact ? 10 : 11, weight: .medium))
-            .foregroundStyle(Color(red: 0.57, green: 0.83, blue: 1.0))
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, compact ? 8 : 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
-                    .fill(Color(red: 0.10, green: 0.20, blue: 0.33).opacity(0.92))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
-                    .stroke(Color(red: 0.57, green: 0.83, blue: 1.0).opacity(0.24), lineWidth: 1)
-            )
-    }
-
     var permissionSettingsButton: some View {
         Button(action: store.openAccessibilitySettings) {
             Text("打开辅助功能设置")
@@ -849,7 +612,11 @@ private extension IslandRootView {
                 .padding(.vertical, 6)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.12))
+                        .fill(Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.14))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.22), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -913,94 +680,6 @@ private extension IslandRootView {
         case .failure:
             return Color(red: 0.90, green: 0.24, blue: 0.22)
         }
-    }
-
-    var providerUsageRows: [ProviderUsageRow] {
-        let grouped = Dictionary(grouping: store.sessions, by: \.origin)
-        let preferredOrder: [SessionOrigin] = [.claude, .codex, .generic]
-
-        return preferredOrder.compactMap { origin in
-            guard let sessions = grouped[origin], !sessions.isEmpty else {
-                return nil
-            }
-
-            return ProviderUsageRow(
-                origin: origin,
-                shortWindow: activityShare(for: sessions, recentInterval: 5 * 60 * 60),
-                longWindow: activityShare(for: sessions, recentInterval: 7 * 24 * 60 * 60)
-            )
-        }
-    }
-
-    func activityShare(for sessions: [AgentSessionSnapshot], recentInterval: TimeInterval) -> Double {
-        let now = Date()
-        let recentCount = sessions.filter { now.timeIntervalSince($0.updatedAt) <= recentInterval }.count
-        guard !sessions.isEmpty else {
-            return 0
-        }
-
-        return Double(recentCount) / Double(sessions.count)
-    }
-
-    func usageRow(_ row: ProviderUsageRow) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            Text(row.origin.provider.displayName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(width: 52, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            HStack(alignment: .center, spacing: 10) {
-                usageMetric(label: "5h", value: row.shortWindow)
-                    .frame(width: 82, alignment: .leading)
-
-                Text("·")
-                    .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(Color.white.opacity(0.3))
-
-                usageMetric(label: "wk", value: row.longWindow)
-                    .frame(width: 82, alignment: .leading)
-            }
-            .padding(.trailing, 12)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    func usageMetric(label: String, value: Double) -> some View {
-        HStack(alignment: .center, spacing: 6) {
-            Text(label)
-                .font(.system(size: 9, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.44))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.07))
-
-                    Capsule(style: .continuous)
-                        .fill(Color(red: 0.13, green: 0.77, blue: 0.37))
-                        .frame(width: max(proxy.size.width * value, value > 0 ? 4 : 0))
-                }
-            }
-            .frame(width: 48, height: 4)
-
-            Text(percentText(value))
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.62))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .lineLimit(1)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    func percentText(_ value: Double) -> String {
-        "\(Int((value * 100).rounded()))%"
     }
 
     func providerBadge(for origin: SessionOrigin) -> some View {
@@ -1087,18 +766,6 @@ private extension IslandRootView {
         return request.source.provider.displayName
     }
 
-    func approvalSourcePill(for origin: SessionOrigin) -> some View {
-        Text(origin.provider.displayName)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(origin.provider.tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(origin.provider.tint.opacity(0.14))
-            )
-    }
-
     func relativeTimestamp(for date: Date) -> String {
         let interval = max(Int(Date().timeIntervalSince(date)), 0)
         if interval < 5 {
@@ -1120,6 +787,29 @@ private extension IslandRootView {
 
 
 private extension IslandRootView {
+    var panelCardGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0.09, green: 0.10, blue: 0.11).opacity(0.98),
+                Color(red: 0.04, green: 0.05, blue: 0.06).opacity(0.96)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    var panelCardStroke: Color {
+        Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.18)
+    }
+
+    var panelSecondaryFill: Color {
+        Color(red: 0.06, green: 0.07, blue: 0.08).opacity(0.94)
+    }
+
+    var panelSecondaryStroke: Color {
+        Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.20)
+    }
+
     enum PanelPillTone {
         case neutral
         case stale
@@ -1136,26 +826,13 @@ private extension IslandRootView {
         var background: Color {
             switch self {
             case .neutral:
-                return Color.white.opacity(0.07)
+                return Color(red: 0.32, green: 0.96, blue: 0.38).opacity(0.12)
             case .stale:
                 return Color(red: 0.98, green: 0.79, blue: 0.43).opacity(0.14)
             }
         }
     }
 
-    struct ProviderUsageRow: Identifiable {
-        let origin: SessionOrigin
-        let shortWindow: Double
-        let longWindow: Double
-
-        var id: SessionOrigin { origin }
-
-        init(origin: SessionOrigin, shortWindow: Double, longWindow: Double) {
-            self.origin = origin
-            self.shortWindow = shortWindow
-            self.longWindow = longWindow
-        }
-    }
 }
 
 private struct TabCutShape: InsettableShape {

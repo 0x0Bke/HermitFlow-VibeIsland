@@ -41,7 +41,7 @@ enum ApprovalDecision {
     }
 }
 
-enum ApprovalExecutionResult: Equatable {
+enum FocusApprovalAutomationResult: Equatable {
     case success
     case routedToWindow
     case applicationNotFound
@@ -114,7 +114,7 @@ final class FocusLauncher {
         return false
     }
 
-    func performApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> ApprovalExecutionResult {
+    func performApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> FocusApprovalAutomationResult {
         switch target.clientOrigin {
         case .claudeCLI:
             return performTerminalApproval(decision, for: target)
@@ -129,7 +129,7 @@ final class FocusLauncher {
         }
     }
 
-    private func performGraphicalApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> ApprovalExecutionResult {
+    private func performGraphicalApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> FocusApprovalAutomationResult {
         guard bringToFront(target) else {
             return .applicationNotFound
         }
@@ -184,7 +184,7 @@ final class FocusLauncher {
         return output == "not-found" ? .appleScriptButtonNotFound : .appleScriptFailed(message)
     }
 
-    private func performTerminalApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> ApprovalExecutionResult {
+    private func performTerminalApproval(_ decision: ApprovalDecision, for target: FocusTarget) -> FocusApprovalAutomationResult {
         guard bringToFront(target) else {
             return .applicationNotFound
         }

@@ -3,20 +3,23 @@ import Foundation
 import Network
 
 struct LocalCodexSource: @unchecked Sendable {
-    private let stateDatabaseURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/state_5.sqlite")
-    private let logsDatabaseURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/logs_1.sqlite")
+    private let codexRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex")
     private let sessionsDirectoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/sessions")
     private let globalStateURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/.codex-global-state.json")
+    private let codexHistoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/history.jsonl")
     private let tuiLogURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/log/codex-tui.log")
     private let recentThreadLimit = 8
+    private let usageThreadLimit = 50
     private let idleSessionLookback: TimeInterval = 6 * 60 * 60
     private let unconfirmedDesktopSessionLookback: TimeInterval = 5 * 60
     private let fallbackTUILookback: TimeInterval = 6 * 60 * 60
     private let staleSessionThreshold: TimeInterval = 3 * 60
     private let recentSessionScanBytes = 768 * 1024
+    private let maxSessionMetaLineBytes = 8 * 1024 * 1024
     private let runningSignalMaxAge: TimeInterval = 30
     private let terminalStatusHold: TimeInterval = 18
     private let successSettleDelay: TimeInterval = 1
+    private let rateLimitResetTolerance: TimeInterval = 5
     private let shellSnapshotsDirectoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/shell_snapshots")
     private let sessionFileLocator = SessionFileLocator(
         rootURL: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/sessions")
@@ -27,28 +30,42 @@ struct LocalCodexSource: @unchecked Sendable {
         return formatter
     }()
 
+    private var stateDatabaseURL: URL {
+        latestSQLiteURL(prefix: "state_", fallbackName: "state_5.sqlite")
+    }
+
+    private var logsDatabaseURL: URL {
+        latestSQLiteURL(prefix: "logs_", fallbackName: "logs_1.sqlite")
+    }
+
     func fetchActivity() -> ActivitySourceSnapshot {
-        guard
-            FileManager.default.fileExists(atPath: stateDatabaseURL.path),
-            FileManager.default.fileExists(atPath: logsDatabaseURL.path)
-        else {
+        let fileManager = FileManager.default
+        let hasStateDatabase = fileManager.fileExists(atPath: stateDatabaseURL.path)
+        let hasHistoryLog = fileManager.fileExists(atPath: codexHistoryURL.path)
+        let hasSessionsDirectory = fileManager.fileExists(atPath: sessionsDirectoryURL.path)
+
+        guard hasStateDatabase || hasHistoryLog || hasSessionsDirectory else {
             return ActivitySourceSnapshot(
                 sessions: [],
                 statusMessage: "Local Codex state unavailable",
                 lastUpdatedAt: .now,
                 errorMessage: nil,
-                approvalRequest: nil
+                approvalRequest: nil,
+                usageSnapshots: []
             )
         }
 
-        let threadSnapshots = fetchRecentThreadSnapshots(limit: recentThreadLimit)
+        let threadReferences = fetchRecentThreadReferences(limit: recentThreadLimit)
+        let usageThreadReferences = fetchRecentThreadReferences(limit: usageThreadLimit)
+        let threadSnapshots = threadReferences.compactMap(makeThreadSnapshot(from:))
         guard !threadSnapshots.isEmpty else {
             return ActivitySourceSnapshot(
                 sessions: [],
                 statusMessage: "Waiting for Codex activity",
                 lastUpdatedAt: .now,
                 errorMessage: nil,
-                approvalRequest: nil
+                approvalRequest: nil,
+                usageSnapshots: fetchUsageSnapshots(threadReferences: usageThreadReferences)
             )
         }
 
@@ -165,7 +182,8 @@ struct LocalCodexSource: @unchecked Sendable {
             statusMessage: statusMessage,
             lastUpdatedAt: lastUpdatedAt,
             errorMessage: nil,
-            approvalRequest: newestApprovalRequest
+            approvalRequest: newestApprovalRequest,
+            usageSnapshots: fetchUsageSnapshots(threadReferences: usageThreadReferences)
         )
     }
 
@@ -232,6 +250,7 @@ struct LocalCodexSource: @unchecked Sendable {
         let now = Date().timeIntervalSince1970
         let latestCompletionAt = max(snapshot.completedAt, sessionHints?.taskCompletedAt ?? 0)
         let latestFailureAt = max(snapshot.failedAt, sessionHints?.taskFailedAt ?? 0)
+        let latestAbortedAt = sessionHints?.taskAbortedAt ?? 0
         let latestTerminalAt = max(latestCompletionAt, latestFailureAt)
         let latestExplicitRunningAt = max(
             snapshot.inProgressAt,
@@ -239,6 +258,13 @@ struct LocalCodexSource: @unchecked Sendable {
             snapshot.streamingActivityAt,
             sessionHints?.taskStartedAt ?? 0
         )
+
+        if latestAbortedAt > 0,
+           latestAbortedAt >= latestExplicitRunningAt,
+           latestAbortedAt >= latestCompletionAt,
+           latestAbortedAt >= latestFailureAt {
+            return .idle
+        }
 
         if latestFailureAt > 0,
            now - latestFailureAt <= terminalStatusHold,
@@ -264,6 +290,175 @@ struct LocalCodexSource: @unchecked Sendable {
         return .idle
     }
 
+    private func fetchUsageSnapshots(threadReferences: [RecentThreadReference]) -> [ProviderUsageSnapshot] {
+        guard let snapshot = fetchLatestCodexUsageSnapshot(threadReferences: threadReferences) else {
+            return []
+        }
+
+        return [snapshot]
+    }
+
+    private func fetchLatestCodexUsageSnapshot(threadReferences: [RecentThreadReference]) -> ProviderUsageSnapshot? {
+        var primaryWindow: LocalCodexUsageWindow?
+        var secondaryWindow: LocalCodexUsageWindow?
+        var latestTimestamp: Date?
+
+        for reference in threadReferences {
+            guard let fileURL = fetchSessionFileURL(for: reference.threadID),
+                  let snapshot = fetchUsageSnapshot(from: fileURL) else {
+                continue
+            }
+
+            primaryWindow = mergedUsageWindow(current: primaryWindow, incoming: snapshot.primaryWindow)
+            secondaryWindow = mergedUsageWindow(current: secondaryWindow, incoming: snapshot.secondaryWindow)
+            latestTimestamp = max(latestTimestamp ?? .distantPast, snapshot.updatedAt)
+        }
+
+        guard primaryWindow != nil || secondaryWindow != nil else {
+            return nil
+        }
+
+        return ProviderUsageSnapshot(
+            origin: .codex,
+            shortWindowRemaining: normalizedRemainingShare(forUsedPercent: primaryWindow?.usedPercent),
+            longWindowRemaining: normalizedRemainingShare(forUsedPercent: secondaryWindow?.usedPercent),
+            updatedAt: latestTimestamp ?? .now
+        )
+    }
+
+    private func fetchUsageSnapshot(from fileURL: URL) -> LocalCodexUsageSnapshot? {
+        var latestSnapshot: LocalCodexUsageSnapshot?
+
+        for line in readRecentLines(from: fileURL, maxBytes: recentSessionScanBytes).reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = record["type"] as? String,
+                  type == "event_msg",
+                  let payload = record["payload"] as? [String: Any],
+                  let payloadType = payload["type"] as? String,
+                  payloadType == "token_count",
+                  let rateLimits = payload["rate_limits"] as? [String: Any]
+            else {
+                continue
+            }
+
+            let timestampString = record["timestamp"] as? String
+            let timestamp = timestampString.flatMap(iso8601Formatter.date(from:)) ?? .now
+            let snapshot = LocalCodexUsageSnapshot(
+                primaryWindow: makeUsageWindow(from: rateLimits["primary"] as? [String: Any]),
+                secondaryWindow: makeUsageWindow(from: rateLimits["secondary"] as? [String: Any]),
+                updatedAt: timestamp
+            )
+
+            latestSnapshot = latestSnapshot.map { mergedUsageSnapshot(current: $0, incoming: snapshot) } ?? snapshot
+        }
+
+        return latestSnapshot
+    }
+
+    private func makeUsageWindow(from payload: [String: Any]?) -> LocalCodexUsageWindow? {
+        guard let payload else {
+            return nil
+        }
+
+        let resetsAt = timeInterval(from: payload["resets_at"])
+        let windowMinutes = intValue(from: payload["window_minutes"])
+        let usedPercent = doubleValue(from: payload["used_percent"])
+        guard resetsAt != nil || usedPercent != nil || windowMinutes != nil else {
+            return nil
+        }
+
+        return LocalCodexUsageWindow(
+            usedPercent: usedPercent,
+            resetsAt: resetsAt,
+            windowMinutes: windowMinutes
+        )
+    }
+
+    private func mergedUsageSnapshot(current: LocalCodexUsageSnapshot, incoming: LocalCodexUsageSnapshot) -> LocalCodexUsageSnapshot {
+        LocalCodexUsageSnapshot(
+            primaryWindow: mergedUsageWindow(current: current.primaryWindow, incoming: incoming.primaryWindow),
+            secondaryWindow: mergedUsageWindow(current: current.secondaryWindow, incoming: incoming.secondaryWindow),
+            updatedAt: max(current.updatedAt, incoming.updatedAt)
+        )
+    }
+
+    private func mergedUsageWindow(current: LocalCodexUsageWindow?, incoming: LocalCodexUsageWindow?) -> LocalCodexUsageWindow? {
+        guard let incoming else {
+            return current
+        }
+        guard let current else {
+            return incoming
+        }
+
+        let currentReset = current.resetsAt ?? 0
+        let incomingReset = incoming.resetsAt ?? 0
+        if abs(incomingReset - currentReset) <= rateLimitResetTolerance {
+            let currentUsed = current.usedPercent ?? 0
+            let incomingUsed = incoming.usedPercent ?? 0
+            if incomingUsed != currentUsed {
+                return incomingUsed > currentUsed ? incoming : current
+            }
+
+            if current.usedPercent == nil {
+                return incoming
+            }
+
+            return currentReset >= incomingReset ? current : incoming
+        }
+
+        if incomingReset != currentReset {
+            return incomingReset > currentReset ? incoming : current
+        }
+
+        let currentUsed = current.usedPercent ?? 0
+        let incomingUsed = incoming.usedPercent ?? 0
+        if incomingUsed != currentUsed {
+            return incomingUsed > currentUsed ? incoming : current
+        }
+
+        if current.usedPercent == nil {
+            return incoming
+        }
+
+        return current
+    }
+
+    private func normalizedRemainingShare(forUsedPercent value: Any?) -> Double {
+        let usedPercent = doubleValue(from: value)
+        guard let usedPercent else {
+            return 1
+        }
+
+        return max(0, min(1, (100 - usedPercent) / 100))
+    }
+
+    private func doubleValue(from value: Any?) -> Double? {
+        switch value {
+        case let number as NSNumber:
+            return number.doubleValue
+        case let string as String:
+            return Double(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            return nil
+        }
+    }
+
+    private func intValue(from value: Any?) -> Int? {
+        switch value {
+        case let number as NSNumber:
+            return number.intValue
+        case let string as String:
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            return nil
+        }
+    }
+
+    private func timeInterval(from value: Any?) -> TimeInterval? {
+        doubleValue(from: value)
+    }
+
     private func fetchRecentThreadSnapshots(limit: Int) -> [LocalCodexThreadSnapshot] {
         fetchRecentThreadReferences(limit: limit).compactMap(makeThreadSnapshot(from:))
     }
@@ -277,14 +472,68 @@ struct LocalCodexSource: @unchecked Sendable {
         limit \(limit);
         """
 
-        guard
-            let latestThreadRows = runSQLiteRows(databaseURL: stateDatabaseURL, sql: latestThreadSQL),
-            !latestThreadRows.isEmpty
-        else {
+        let databaseReferences = (runSQLiteRows(databaseURL: stateDatabaseURL, sql: latestThreadSQL) ?? [])
+            .compactMap(makeThreadReference(from:))
+        let historyReferences = fetchRecentHistoryThreadReferences(limit: limit)
+
+        var mergedReferences: [RecentThreadReference] = []
+        var seenThreadIDs = Set<String>()
+
+        for reference in (databaseReferences + historyReferences).sorted(by: { lhs, rhs in
+            lhs.threadUpdatedAt > rhs.threadUpdatedAt
+        }) {
+            guard !seenThreadIDs.contains(reference.threadID) else {
+                continue
+            }
+
+            seenThreadIDs.insert(reference.threadID)
+            mergedReferences.append(reference)
+
+            if mergedReferences.count >= limit {
+                break
+            }
+        }
+
+        return mergedReferences
+    }
+
+    private func fetchRecentHistoryThreadReferences(limit: Int) -> [RecentThreadReference] {
+        guard let content = try? String(contentsOf: codexHistoryURL, encoding: .utf8) else {
             return []
         }
 
-        return latestThreadRows.compactMap(makeThreadReference(from:))
+        var references: [RecentThreadReference] = []
+        var seenThreadIDs = Set<String>()
+
+        for line in content.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let entry = try? JSONDecoder().decode(LocalCodexHistoryEntry.self, from: data),
+                  !entry.sessionID.isEmpty,
+                  !seenThreadIDs.contains(entry.sessionID)
+            else {
+                continue
+            }
+
+            let cwd = fetchSessionFileURL(for: entry.sessionID)
+                .flatMap(fetchSessionMeta(from:))?
+                .cwd ?? ""
+
+            references.append(
+                RecentThreadReference(
+                    threadID: entry.sessionID,
+                    threadUpdatedAt: entry.timestamp,
+                    threadSource: "cli",
+                    cwd: cwd
+                )
+            )
+            seenThreadIDs.insert(entry.sessionID)
+
+            if references.count >= limit {
+                break
+            }
+        }
+
+        return references
     }
 
     private func makeThreadReference(from row: String) -> RecentThreadReference? {
@@ -420,7 +669,7 @@ struct LocalCodexSource: @unchecked Sendable {
 
             data.append(chunk)
 
-            if data.count >= 1_000_000 {
+            if data.count >= maxSessionMetaLineBytes {
                 break
             }
         }
@@ -532,7 +781,7 @@ struct LocalCodexSource: @unchecked Sendable {
         let clientOrigin: FocusClientOrigin
         if preferDesktopOrigin || sessionMeta?.originator == "Codex Desktop" {
             clientOrigin = .codexDesktop
-        } else if sessionMeta?.originator == "codex_cli_rs" || sessionMeta?.source == "cli" || fallbackSource == "cli" {
+        } else if isCLIOrigin(originator: sessionMeta?.originator, source: sessionMeta?.source, fallbackSource: fallbackSource) {
             clientOrigin = .codexCLI
         } else if sessionMeta?.originator == "codex_vscode" || sessionMeta?.source == "vscode" || fallbackSource == "vscode" {
             clientOrigin = .codexVSCode
@@ -636,7 +885,7 @@ struct LocalCodexSource: @unchecked Sendable {
 
             let timestampString = record["timestamp"] as? String
             let timestamp = timestampString.flatMap(iso8601Formatter.date(from:)) ?? .now
-            let command = arguments["command"] as? String ?? ""
+            let command = (arguments["cmd"] as? String) ?? (arguments["command"] as? String) ?? ""
             let justification = arguments["justification"] as? String
 
             pendingCalls[callID] = PendingApprovalPayload(
@@ -690,6 +939,7 @@ struct LocalCodexSource: @unchecked Sendable {
         var taskStartedAt: Date?
         var taskCompletedAt: Date?
         var taskFailedAt: Date?
+        var taskAbortedAt: Date?
 
         for line in recentLines {
             guard let data = String(line).data(using: .utf8) else {
@@ -697,15 +947,29 @@ struct LocalCodexSource: @unchecked Sendable {
             }
 
             guard
-                let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let payload = record["payload"] as? [String: Any],
-                let payloadType = payload["type"] as? String
+                let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else {
                 continue
             }
 
             let timestampString = record["timestamp"] as? String
             let timestamp = timestampString.flatMap(iso8601Formatter.date(from:)) ?? .now
+
+            if let recordType = record["type"] as? String,
+               recordType == "event_msg",
+               let payload = record["payload"] as? [String: Any],
+               let payloadType = payload["type"] as? String,
+               payloadType == "turn_aborted" {
+                taskAbortedAt = timestamp
+                continue
+            }
+
+            guard
+                let payload = record["payload"] as? [String: Any],
+                let payloadType = payload["type"] as? String
+            else {
+                continue
+            }
 
             switch payloadType {
             case "task_started":
@@ -719,14 +983,15 @@ struct LocalCodexSource: @unchecked Sendable {
             }
         }
 
-        guard taskStartedAt != nil || taskCompletedAt != nil || taskFailedAt != nil else {
+        guard taskStartedAt != nil || taskCompletedAt != nil || taskFailedAt != nil || taskAbortedAt != nil else {
             return nil
         }
 
         return LocalCodexSessionActivityHints(
             taskStartedAt: taskStartedAt?.timeIntervalSince1970 ?? 0,
             taskCompletedAt: taskCompletedAt?.timeIntervalSince1970 ?? 0,
-            taskFailedAt: taskFailedAt?.timeIntervalSince1970 ?? 0
+            taskFailedAt: taskFailedAt?.timeIntervalSince1970 ?? 0,
+            taskAbortedAt: taskAbortedAt?.timeIntervalSince1970 ?? 0
         )
     }
 
@@ -828,7 +1093,7 @@ struct LocalCodexSource: @unchecked Sendable {
         terminalClient: TerminalClient?,
         preferDesktopOrigin: Bool
     ) -> String {
-        if sessionMeta?.originator == "codex_cli_rs" || sessionMeta?.source == "cli" || fallbackSource == "cli" {
+        if isCLIOrigin(originator: sessionMeta?.originator, source: sessionMeta?.source, fallbackSource: fallbackSource) {
             return "\(terminalClient?.displayName ?? TerminalClient.unknown.displayName) Codex"
         }
 
@@ -997,6 +1262,63 @@ struct LocalCodexSource: @unchecked Sendable {
             }
     }
 
+    private func latestSQLiteURL(prefix: String, fallbackName: String) -> URL {
+        let fallbackURL = codexRootURL.appendingPathComponent(fallbackName)
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: codexRootURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return fallbackURL
+        }
+
+        let matchingURLs = fileURLs.filter { fileURL in
+            let name = fileURL.lastPathComponent
+            return name.hasPrefix(prefix) && name.hasSuffix(".sqlite")
+        }
+
+        guard !matchingURLs.isEmpty else {
+            return fallbackURL
+        }
+
+        return matchingURLs.max { lhs, rhs in
+            let leftVersion = sqliteVersion(in: lhs.lastPathComponent, prefix: prefix)
+            let rightVersion = sqliteVersion(in: rhs.lastPathComponent, prefix: prefix)
+            if leftVersion != rightVersion {
+                return leftVersion < rightVersion
+            }
+
+            let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return leftDate < rightDate
+        } ?? fallbackURL
+    }
+
+    private func sqliteVersion(in fileName: String, prefix: String) -> Int {
+        guard
+            fileName.hasPrefix(prefix),
+            fileName.hasSuffix(".sqlite")
+        else {
+            return -1
+        }
+
+        let start = fileName.index(fileName.startIndex, offsetBy: prefix.count)
+        let end = fileName.index(fileName.endIndex, offsetBy: -".sqlite".count)
+        return Int(fileName[start..<end]) ?? -1
+    }
+
+    private func isCLIOrigin(originator: String?, source: String?, fallbackSource: String) -> Bool {
+        let normalizedOriginator = originator?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedSource = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedFallbackSource = fallbackSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if ["cli", "exec"].contains(normalizedSource) || ["cli", "exec"].contains(normalizedFallbackSource) {
+            return true
+        }
+
+        return ["codex_cli_rs", "codex_sdk_ts", "codex-tui"].contains(normalizedOriginator)
+    }
+
     private func parseLogTimestamp(from line: String) -> TimeInterval? {
         guard let timestampEnd = line.firstIndex(of: " ") else {
             return nil
@@ -1134,6 +1456,18 @@ private struct RecentThreadReference {
     let cwd: String
 }
 
+private struct LocalCodexUsageSnapshot {
+    let primaryWindow: LocalCodexUsageWindow?
+    let secondaryWindow: LocalCodexUsageWindow?
+    let updatedAt: Date
+}
+
+private struct LocalCodexUsageWindow {
+    let usedPercent: Double?
+    let resetsAt: TimeInterval?
+    let windowMinutes: Int?
+}
+
 private struct LocalCodexSessionMeta {
     let cwd: String
     let originator: String
@@ -1143,10 +1477,16 @@ private struct LocalCodexSessionMeta {
         if originator == "Codex Desktop" {
             return "Codex Desktop"
         }
-        if originator == "codex_cli_rs" || source == "cli" {
+        let normalizedOriginator = originator.lowercased()
+        let normalizedSource = source.lowercased()
+        if normalizedOriginator == "codex_cli_rs"
+            || normalizedOriginator == "codex_sdk_ts"
+            || normalizedOriginator == "codex-tui"
+            || normalizedSource == "cli"
+            || normalizedSource == "exec" {
             return "Terminal Codex"
         }
-        if originator == "codex_vscode" || source == "vscode" {
+        if normalizedOriginator == "codex_vscode" || normalizedSource == "vscode" {
             return "VS Code Codex"
         }
         return "Local Codex"
@@ -1161,6 +1501,16 @@ private struct LocalCodexSessionMetaRecord: Decodable {
     }
 
     let payload: Payload
+}
+
+private struct LocalCodexHistoryEntry: Decodable {
+    let sessionID: String
+    let timestamp: TimeInterval
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case timestamp = "ts"
+    }
 }
 
 private struct LocalCodexGlobalState: Decodable {
@@ -1187,9 +1537,10 @@ private struct LocalCodexSessionActivityHints {
     let taskStartedAt: TimeInterval
     let taskCompletedAt: TimeInterval
     let taskFailedAt: TimeInterval
+    let taskAbortedAt: TimeInterval
 
     var latestKnownAt: TimeInterval {
-        max(taskStartedAt, taskCompletedAt, taskFailedAt)
+        max(taskStartedAt, taskCompletedAt, taskFailedAt, taskAbortedAt)
     }
 }
 
@@ -1224,6 +1575,27 @@ final class LocalClaudeSource: @unchecked Sendable {
     func resolveApproval(id: String, decision: ApprovalDecision) -> Bool {
         bridge.resolveApproval(id: id, decision: decision)
     }
+
+    func startCallbackServer() {
+        bridge.start()
+    }
+
+    func installHooks() throws {
+        bridge.start()
+        try bridge.installHooks()
+    }
+
+    func uninstallHooks() throws {
+        try bridge.uninstallHooks()
+    }
+
+    func hookHealthReport() -> SourceHealthReport {
+        bridge.hookHealthReport()
+    }
+
+    func callbackServerHealthReport() -> SourceHealthReport {
+        bridge.callbackServerHealthReport()
+    }
 }
 
 private final class ClaudeHookBridge: @unchecked Sendable {
@@ -1243,10 +1615,23 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private let hookScriptName = "hermit-claude-hook.js"
     private let hookMarker = "hermit-claude-hook.js"
     private let permissionHookPath = "/permission/hermitflow"
+    private let claudeUsageCacheURL = URL(fileURLWithPath: "/tmp/hermitflow-rl.json")
+    private let claudeStatusLineDebugURL = URL(fileURLWithPath: "/tmp/hermitflow-claude-statusline-debug.json")
     private let claudeHistoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/history.jsonl")
+    private let claudeProjectsRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+    private let claudeDebugLogURL = URL(fileURLWithPath: "/tmp/hermitflow-claude-debug.log")
     private let recentHistoryScanBytes = 512 * 1024
+    private let recentClaudeProjectFileLimit = 20
+    private let interruptionOverrideWindow: TimeInterval = 10
+    private let stalledPromptFallbackWindow: TimeInterval = 3
+    private let historyTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private var listener: NWListener?
+    private var listenerReady = false
     private var sessions: [String: ClaudeTrackedSession] = [:]
     private var approvals: [String: ClaudePendingApproval] = [:]
     private var approvalOrder: [String] = []
@@ -1259,6 +1644,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             }
 
             do {
+                listenerReady = false
                 let port = NWEndpoint.Port(rawValue: listenerPort) ?? .any
                 let listener = try NWListener(using: .tcp, on: port)
                 listener.newConnectionHandler = { [weak self] connection in
@@ -1271,14 +1657,46 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 self.listener = listener
             } catch {
                 lastErrorMessage = "Claude hook listener unavailable"
+                listenerReady = false
             }
+        }
+    }
+
+    func installHooks() throws {
+        try writeHookScriptIfNeeded()
+        try syncClaudeSettings()
+        queue.sync {
+            lastErrorMessage = nil
+        }
+    }
+
+    func uninstallHooks() throws {
+        let settingsURLs = try resolvedClaudeSettingsURLs()
+        for settingsURL in settingsURLs {
+            try removeManagedHooks(from: settingsURL)
+        }
+
+        let scriptURL = hookRootURL.appendingPathComponent(hookScriptName)
+        if FileManager.default.fileExists(atPath: scriptURL.path) {
+            try FileManager.default.removeItem(at: scriptURL)
+        }
+
+        if FileManager.default.fileExists(atPath: claudeUsageCacheURL.path) {
+            try? FileManager.default.removeItem(at: claudeUsageCacheURL)
+        }
+
+        if FileManager.default.fileExists(atPath: claudeStatusLineDebugURL.path) {
+            try? FileManager.default.removeItem(at: claudeStatusLineDebugURL)
+        }
+
+        queue.sync {
+            lastErrorMessage = nil
         }
     }
 
     func syncHooks() {
         do {
-            try writeHookScriptIfNeeded()
-            try syncClaudeSettings()
+            try installHooks()
             queue.sync {
                 lastErrorMessage = nil
             }
@@ -1308,7 +1726,8 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 statusMessage: statusMessage,
                 lastUpdatedAt: lastUpdatedAt,
                 errorMessage: lastErrorMessage,
-                approvalRequest: latestApprovalRequestLocked()
+                approvalRequest: latestApprovalRequestLocked(),
+                usageSnapshots: []
             )
         }
     }
@@ -1317,6 +1736,18 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         queue.sync {
             cleanupExpiredState(now: .now)
             return latestApprovalRequestLocked()
+        }
+    }
+
+    func hookHealthReport() -> SourceHealthReport {
+        queue.sync {
+            SourceHealthReport(sourceName: "Claude", issues: hookIssuesLocked())
+        }
+    }
+
+    func callbackServerHealthReport() -> SourceHealthReport {
+        queue.sync {
+            SourceHealthReport(sourceName: "Claude", issues: callbackServerIssuesLocked())
         }
     }
 
@@ -1351,9 +1782,14 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             switch state {
             case .ready:
                 lastErrorMessage = nil
+                listenerReady = true
             case let .failed(error):
                 lastErrorMessage = "Claude hook listener failed: \(error.localizedDescription)"
+                listenerReady = false
                 listener?.cancel()
+                listener = nil
+            case .cancelled:
+                listenerReady = false
                 listener = nil
             default:
                 break
@@ -1483,7 +1919,10 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 rawSessionID: sessionID,
                 cwd: existing?.cwd ?? "",
                 source: existing?.source ?? payload.toolName,
-                conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(for: sessionID),
+                conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(
+                    for: sessionID,
+                    cwd: existing?.cwd ?? ""
+                ),
                 status: .running,
                 lastEvent: "PermissionRequest",
                 lastActivityAt: .now
@@ -1493,9 +1932,18 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
     private func cleanupConnection(_ connection: NWConnection) {
         queue.sync {
-            for approval in approvals.values where approval.connection === connection {
-                approval.connection = nil
+            let resolvedApprovalIDs = approvals.compactMap { approvalID, approval in
+                approval.connection === connection ? approvalID : nil
             }
+
+            guard !resolvedApprovalIDs.isEmpty else {
+                return
+            }
+
+            for approvalID in resolvedApprovalIDs {
+                approvals.removeValue(forKey: approvalID)
+            }
+            approvalOrder.removeAll { resolvedApprovalIDs.contains($0) }
         }
     }
 
@@ -1525,6 +1973,129 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         }
 
         return false
+    }
+
+    private func hookIssuesLocked() -> [DiagnosticIssue] {
+        var issues: [DiagnosticIssue] = []
+
+        if resolvedNodeBinaryPathIfAvailable() == nil {
+            issues.append(
+                SourceErrorMapper.issue(
+                    source: "Claude",
+                    severity: .warning,
+                    message: "Node.js is unavailable for the managed Claude hook script.",
+                    recoverySuggestion: "Install Node.js or add it to PATH, then run “Resync Claude Hooks”.",
+                    isRepairable: true
+                )
+            )
+        }
+
+        let scriptURL = hookRootURL.appendingPathComponent(hookScriptName)
+        if !FileManager.default.fileExists(atPath: scriptURL.path) {
+            issues.append(
+                SourceErrorMapper.issue(
+                    source: "Claude",
+                    severity: .warning,
+                    message: "The managed Claude hook script is missing.",
+                    recoverySuggestion: "Run “Resync Claude Hooks” to recreate the local hook script.",
+                    isRepairable: true
+                )
+            )
+        }
+
+        do {
+            let settingsURLs = try resolvedClaudeSettingsURLs()
+            if settingsURLs.isEmpty {
+                issues.append(
+                    SourceErrorMapper.issue(
+                        source: "Claude",
+                        severity: .warning,
+                        message: "No Claude settings file was found for managed hook installation.",
+                        recoverySuggestion: "Create ~/.claude/settings.json or provide a custom settings path.",
+                        isRepairable: true
+                    )
+                )
+            } else {
+                for settingsURL in settingsURLs {
+                    do {
+                        let settings = try loadJSONObjectIfPresent(at: settingsURL) ?? [:]
+                        if !settingsContainsManagedHooks(settings) {
+                            issues.append(
+                                SourceErrorMapper.issue(
+                                    source: "Claude",
+                                    severity: .warning,
+                                    message: "Managed Claude hook entries are missing or have drifted in \(settingsURL.path).",
+                                    recoverySuggestion: "Run “Resync Claude Hooks” to restore the managed entries.",
+                                    isRepairable: true
+                                )
+                            )
+                        }
+                    } catch {
+                        issues.append(
+                            SourceErrorMapper.issue(
+                                source: "Claude",
+                                error: error,
+                                severity: .error,
+                                recoverySuggestion: "Repair the settings file JSON and resync the managed hooks.",
+                                isRepairable: true
+                            )
+                        )
+                    }
+                }
+            }
+        } catch {
+            issues.append(
+                SourceErrorMapper.issue(
+                    source: "Claude",
+                    error: error,
+                    severity: .error,
+                    recoverySuggestion: "Inspect the configured Claude settings paths and repair them locally.",
+                    isRepairable: true
+                )
+            )
+        }
+
+        return issues
+    }
+
+    private func callbackServerIssuesLocked() -> [DiagnosticIssue] {
+        if listenerReady {
+            return []
+        }
+
+        if let lastErrorMessage, !lastErrorMessage.isEmpty {
+            return [
+                SourceErrorMapper.issue(
+                    source: "Claude",
+                    severity: .warning,
+                    message: lastErrorMessage,
+                    recoverySuggestion: "Restart or resync the Claude hook integration to recover the local callback listener.",
+                    isRepairable: true
+                )
+            ]
+        }
+
+        if listener != nil {
+            return [
+                SourceErrorMapper.issue(
+                    source: "Claude",
+                    severity: .info,
+                    message: "The local Claude callback listener is still starting.",
+                    recoverySuggestion: nil,
+                    isRepairable: false
+                )
+            ]
+        }
+
+        return [
+            SourceErrorMapper.issue(
+                source: "Claude",
+                severity: .warning,
+                message: "The local Claude callback listener is not running.",
+                recoverySuggestion: "Run “Resync Claude Hooks” to restart the local callback listener.",
+                isRepairable: true
+            )
+        ]
     }
 
     private func cleanupExpiredState(now: Date) {
@@ -1558,24 +2129,46 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         sessions.values.sorted { lhs, rhs in
             lhs.lastActivityAt > rhs.lastActivityAt
         }.map { session in
-            let resolvedStatus = resolvedStatus(for: session, now: .now)
-            let refreshedSession = ClaudeTrackedSession(
+            let projectState = fetchClaudeProjectDerivedState(
+                for: session.rawSessionID,
+                cwd: session.cwd
+            )
+            let interruptionState = fetchLatestClaudeInterruption(
+                for: session.rawSessionID,
+                cwd: session.cwd
+            )
+            let refreshedSession = refreshedClaudeSession(
+                session,
+                projectState: projectState,
+                interruptionState: interruptionState
+            )
+            writeClaudeDebugLog(
+                "snapshot session=\(session.rawSessionID) cwd=\(session.cwd) hook=\(session.lastEvent):\(session.status.debugLabel)@\(session.lastActivityAt.timeIntervalSince1970) project=\(projectState?.lastEvent ?? "nil"):\(projectState?.status.debugLabel ?? "nil")@\(projectState?.at.timeIntervalSince1970 ?? 0) interrupt=\(interruptionState?.at.timeIntervalSince1970 ?? 0) refreshed=\(refreshedSession.lastEvent):\(refreshedSession.status.debugLabel)@\(refreshedSession.lastActivityAt.timeIntervalSince1970)"
+            )
+            let resolvedStatus = resolvedStatus(for: refreshedSession, now: .now)
+            if resolvedStatus.activityState != .running {
+                clearApprovals(forSessionID: session.rawSessionID)
+            }
+            let summarizedSession = ClaudeTrackedSession(
                 rawSessionID: session.rawSessionID,
-                cwd: session.cwd,
-                source: session.source,
-                conversationSummary: session.conversationSummary ?? fetchClaudeConversationSummary(for: session.rawSessionID),
-                status: session.status,
-                lastEvent: session.lastEvent,
-                lastActivityAt: session.lastActivityAt
+                cwd: refreshedSession.cwd,
+                source: refreshedSession.source,
+                conversationSummary: refreshedSession.conversationSummary ?? fetchClaudeConversationSummary(
+                    for: refreshedSession.rawSessionID,
+                    cwd: refreshedSession.cwd
+                ),
+                status: refreshedSession.status,
+                lastEvent: refreshedSession.lastEvent,
+                lastActivityAt: refreshedSession.lastActivityAt
             )
             return AgentSessionSnapshot(
-                id: "claude:\(refreshedSession.rawSessionID)",
+                id: "claude:\(summarizedSession.rawSessionID)",
                 origin: .claude,
-                title: refreshedSession.title,
-                detail: refreshedSession.detail,
+                title: summarizedSession.title,
+                detail: summarizedSession.detail,
                 activityState: resolvedStatus.activityState,
-                updatedAt: refreshedSession.lastActivityAt,
-                cwd: refreshedSession.cwd.isEmpty ? nil : refreshedSession.cwd,
+                updatedAt: summarizedSession.lastActivityAt,
+                cwd: summarizedSession.cwd.isEmpty ? nil : summarizedSession.cwd,
                 focusTarget: nil,
                 freshness: .live
             )
@@ -1624,14 +2217,34 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             rawSessionID: existing?.rawSessionID ?? payload.sessionID,
             cwd: payload.cwd.isEmpty ? existing?.cwd ?? "" : payload.cwd,
             source: payload.source.isEmpty ? existing?.source ?? "" : payload.source,
-            conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(for: payload.sessionID),
+            conversationSummary: existing?.conversationSummary ?? fetchClaudeConversationSummary(
+                for: payload.sessionID,
+                cwd: payload.cwd.isEmpty ? existing?.cwd ?? "" : payload.cwd
+            ),
             status: incomingStatus,
             lastEvent: payload.event,
             lastActivityAt: now
         )
     }
 
-    private func fetchClaudeConversationSummary(for sessionID: String) -> String? {
+    private func fetchClaudeConversationSummary(for sessionID: String, cwd: String) -> String? {
+        guard !sessionID.isEmpty || !cwd.isEmpty else {
+            return nil
+        }
+
+        if let sessionFileURL = locateClaudeProjectSessionFile(for: sessionID, cwd: cwd) {
+            for line in readRecentLines(from: sessionFileURL, maxBytes: recentHistoryScanBytes).reversed() {
+                guard let data = String(line).data(using: .utf8),
+                      let entry = try? JSONDecoder().decode(ClaudeProjectHistoryEntry.self, from: data),
+                      (sessionID.isEmpty || entry.sessionID == sessionID),
+                      let summary = summarizeConversationText(entry.displayText) else {
+                    continue
+                }
+
+                return summary
+            }
+        }
+
         guard !sessionID.isEmpty else {
             return nil
         }
@@ -1648,6 +2261,502 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         }
 
         return nil
+    }
+
+    private func fetchClaudeProjectDerivedState(for sessionID: String, cwd: String) -> ClaudeProjectDerivedState? {
+        guard !sessionID.isEmpty || !cwd.isEmpty else {
+            return nil
+        }
+
+        let candidateFiles = candidateClaudeProjectSessionFiles(for: sessionID, cwd: cwd)
+        guard !candidateFiles.isEmpty else {
+            return nil
+        }
+
+        var bestState: ClaudeProjectDerivedState?
+
+        for sessionFileURL in candidateFiles {
+            guard let candidateState = fetchClaudeProjectDerivedState(
+                from: sessionFileURL,
+                expectedSessionID: sessionID
+            ) else {
+                continue
+            }
+
+            if let currentBestState = bestState {
+                if shouldPrefer(candidateState, over: currentBestState) {
+                    bestState = candidateState
+                }
+            } else {
+                bestState = candidateState
+            }
+        }
+
+        return bestState
+    }
+
+    private func fetchClaudeProjectDerivedState(from sessionFileURL: URL, expectedSessionID: String) -> ClaudeProjectDerivedState? {
+        for line in readRecentLines(from: sessionFileURL, maxBytes: recentHistoryScanBytes).reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = record["type"] as? String
+            else {
+                continue
+            }
+
+            if !expectedSessionID.isEmpty,
+               expectedSessionID != "default",
+               let recordSessionID = record["sessionId"] as? String,
+               recordSessionID != expectedSessionID {
+                continue
+            }
+
+            let timestampString = record["timestamp"] as? String
+            let timestamp = timestampString.flatMap(historyTimestampFormatter.date(from:)) ?? .now
+
+            if type == "assistant",
+               let message = record["message"] as? [String: Any] {
+                let stopReason = message["stop_reason"] as? String
+                if stopReason == "tool_use" {
+                    return ClaudeProjectDerivedState(status: .running, lastEvent: "tool_use", at: timestamp)
+                }
+
+                if stopReason == "end_turn" {
+                    return ClaudeProjectDerivedState(status: .success, lastEvent: "end_turn", at: timestamp)
+                }
+
+                if stopReason == nil {
+                    return ClaudeProjectDerivedState(status: .running, lastEvent: "assistant_thinking", at: timestamp)
+                }
+            }
+
+            if type == "system",
+               let subtype = record["subtype"] as? String,
+               subtype == "api_error" {
+                return ClaudeProjectDerivedState(status: .failure, lastEvent: "api_error", at: timestamp)
+            }
+
+            if type == "user",
+               let message = record["message"] as? [String: Any] {
+                if let content = message["content"] as? [[String: Any]] {
+                    let interrupted = content.contains { item in
+                        if let text = item["text"] as? String,
+                           text.localizedCaseInsensitiveContains("[Request interrupted by user") {
+                            return true
+                        }
+
+                        if let itemType = item["type"] as? String,
+                           itemType == "tool_result",
+                           let isError = item["is_error"] as? Bool,
+                           isError,
+                           let text = item["content"] as? String,
+                           text.localizedCaseInsensitiveContains("doesn't want to proceed with this tool use") {
+                            return true
+                        }
+
+                        return false
+                    }
+
+                    if interrupted {
+                        return ClaudeProjectDerivedState(status: .idle, lastEvent: "interrupted", at: timestamp)
+                    }
+                }
+
+                return ClaudeProjectDerivedState(status: .idle, lastEvent: "user_prompt", at: timestamp)
+            }
+        }
+
+        return nil
+    }
+
+    private func fetchLatestClaudeInterruption(for sessionID: String, cwd: String) -> ClaudeProjectDerivedState? {
+        let candidateFiles = candidateClaudeProjectSessionFiles(for: sessionID, cwd: cwd)
+        let candidatePaths = candidateFiles.map(\.path).joined(separator: " | ")
+        writeClaudeDebugLog(
+            "interrupt-scan session=\(sessionID) cwd=\(cwd) candidates=\(candidatePaths)"
+        )
+        guard !candidateFiles.isEmpty else {
+            return nil
+        }
+
+        var latestInterruption: ClaudeProjectDerivedState?
+
+        for sessionFileURL in candidateFiles {
+            for line in readRecentLines(from: sessionFileURL, maxBytes: recentHistoryScanBytes).reversed() {
+                guard let data = String(line).data(using: .utf8),
+                      let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = record["type"] as? String,
+                      type == "user"
+                else {
+                    continue
+                }
+
+                if !sessionID.isEmpty,
+                   sessionID != "default",
+                   let recordSessionID = record["sessionId"] as? String,
+                   recordSessionID != sessionID {
+                    continue
+                }
+
+                guard let message = record["message"] as? [String: Any],
+                      let content = message["content"] as? [[String: Any]]
+                else {
+                    continue
+                }
+
+                let interrupted = content.contains { item in
+                    if let text = item["text"] as? String,
+                       text.localizedCaseInsensitiveContains("[Request interrupted by user") {
+                        return true
+                    }
+
+                    if let itemType = item["type"] as? String,
+                       itemType == "tool_result",
+                       let isError = item["is_error"] as? Bool,
+                       isError,
+                       let text = item["content"] as? String,
+                       text.localizedCaseInsensitiveContains("doesn't want to proceed with this tool use") {
+                        return true
+                    }
+
+                    return false
+                }
+
+                guard interrupted else {
+                    continue
+                }
+
+                let timestampString = record["timestamp"] as? String
+                let timestamp = timestampString.flatMap(historyTimestampFormatter.date(from:)) ?? .now
+                let candidate = ClaudeProjectDerivedState(status: .idle, lastEvent: "interrupted", at: timestamp)
+                writeClaudeDebugLog(
+                    "interrupt-hit session=\(sessionID) file=\(sessionFileURL.path) at=\(timestamp.timeIntervalSince1970)"
+                )
+
+                if let currentLatestInterruption = latestInterruption {
+                    if candidate.at > currentLatestInterruption.at {
+                        latestInterruption = candidate
+                    }
+                } else {
+                    latestInterruption = candidate
+                }
+                break
+            }
+        }
+
+        return latestInterruption
+    }
+
+    private func shouldPrefer(_ lhs: ClaudeProjectDerivedState, over rhs: ClaudeProjectDerivedState) -> Bool {
+        let lhsPriority = claudeProjectStatePriority(lhs)
+        let rhsPriority = claudeProjectStatePriority(rhs)
+        if lhsPriority != rhsPriority {
+            return lhsPriority > rhsPriority
+        }
+
+        return lhs.at > rhs.at
+    }
+
+    private func claudeProjectStatePriority(_ state: ClaudeProjectDerivedState) -> Int {
+        switch state.lastEvent {
+        case "interrupted":
+            return 4
+        case "tool_use", "assistant_thinking", "api_error", "end_turn":
+            return 3
+        case "user_prompt":
+            return 1
+        default:
+            return 2
+        }
+    }
+
+    private func candidateClaudeProjectSessionFiles(for sessionID: String, cwd: String) -> [URL] {
+        var candidates: [URL] = []
+
+        if !sessionID.isEmpty,
+           sessionID != "default",
+           let directMatch = locateClaudeProjectSessionFileBySessionID(sessionID) {
+            candidates.append(directMatch)
+        }
+
+        if !cwd.isEmpty,
+           let cwdMatch = locateLatestClaudeProjectSessionFile(forCWD: cwd) {
+            candidates.append(cwdMatch)
+        }
+
+        candidates.append(contentsOf: locateLatestClaudeProjectSessionFilesGlobally(limit: recentClaudeProjectFileLimit))
+
+        var seenPaths = Set<String>()
+        return candidates.filter { url in
+            let path = url.standardizedFileURL.path
+            guard !path.isEmpty, !seenPaths.contains(path) else {
+                return false
+            }
+            seenPaths.insert(path)
+            return true
+        }
+    }
+
+    private func locateClaudeProjectSessionFile(for sessionID: String, cwd: String) -> URL? {
+        if !sessionID.isEmpty,
+           sessionID != "default",
+           let directMatch = locateClaudeProjectSessionFileBySessionID(sessionID) {
+            return directMatch
+        }
+
+        if !cwd.isEmpty,
+           let cwdMatch = locateLatestClaudeProjectSessionFile(forCWD: cwd) {
+            return cwdMatch
+        }
+
+        if !sessionID.isEmpty {
+            if let directMatch = locateClaudeProjectSessionFileBySessionID(sessionID) {
+                return directMatch
+            }
+        }
+
+        if sessionID == "default" || cwd.isEmpty {
+            return locateLatestClaudeProjectSessionFileGlobally()
+        }
+
+        return nil
+    }
+
+    private func locateClaudeProjectSessionFileBySessionID(_ sessionID: String) -> URL? {
+        guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
+            at: claudeProjectsRootURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        for directoryURL in directoryURLs {
+            let candidate = directoryURL.appendingPathComponent("\(sessionID).jsonl")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func locateLatestClaudeProjectSessionFile(forCWD cwd: String) -> URL? {
+        let normalizedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCWD.isEmpty else {
+            return nil
+        }
+
+        let directoryURL = claudeProjectsRootURL.appendingPathComponent(
+            sanitizedClaudeProjectsDirectoryName(for: normalizedCWD)
+        )
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        return fileURLs
+            .filter { $0.pathExtension == "jsonl" }
+            .max { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhsDate < rhsDate
+            }
+    }
+
+    private func locateLatestClaudeProjectSessionFileGlobally() -> URL? {
+        locateLatestClaudeProjectSessionFilesGlobally(limit: 1).first
+    }
+
+    private func locateLatestClaudeProjectSessionFilesGlobally(limit: Int) -> [URL] {
+        guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
+            at: claudeProjectsRootURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        var allFiles: [(url: URL, modifiedAt: Date)] = []
+
+        for directoryURL in directoryURLs {
+            guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for fileURL in fileURLs where fileURL.pathExtension == "jsonl" {
+                let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                allFiles.append((fileURL, modifiedAt))
+            }
+        }
+
+        return allFiles
+            .sorted { lhs, rhs in lhs.modifiedAt > rhs.modifiedAt }
+            .prefix(max(1, limit))
+            .map(\.url)
+    }
+
+    private func sanitizedClaudeProjectsDirectoryName(for cwd: String) -> String {
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "/" else {
+            return "-"
+        }
+
+        return trimmed.replacingOccurrences(of: "/", with: "-")
+    }
+
+    private func refreshedClaudeSession(
+        _ session: ClaudeTrackedSession,
+        projectState: ClaudeProjectDerivedState?,
+        interruptionState: ClaudeProjectDerivedState?
+    ) -> ClaudeTrackedSession {
+        if session.status == .running,
+           session.lastEvent == "UserPromptSubmit",
+           projectState?.lastEvent == "user_prompt" {
+            let promptReferenceAt = max(session.lastActivityAt, projectState?.at ?? .distantPast)
+            if Date().timeIntervalSince(promptReferenceAt) >= stalledPromptFallbackWindow {
+                writeClaudeDebugLog(
+                    "stalled-prompt-fallback session=\(session.rawSessionID) promptAt=\(promptReferenceAt.timeIntervalSince1970)"
+                )
+                return ClaudeTrackedSession(
+                    rawSessionID: session.rawSessionID,
+                    cwd: session.cwd,
+                    source: session.source,
+                    conversationSummary: session.conversationSummary,
+                    status: .idle,
+                    lastEvent: "stalled_prompt",
+                    lastActivityAt: promptReferenceAt
+                )
+            }
+        }
+
+        if session.status == .running,
+           let interruptionState {
+            let projectRunningAfterInterrupt =
+                projectState?.status == .running &&
+                (projectState?.at ?? .distantPast).timeIntervalSince(interruptionState.at) > 1
+            let explicitHookRunningAfterInterrupt =
+                ClaudeTrackedSession.isExplicitRunningEvent(session.lastEvent) &&
+                session.lastActivityAt.timeIntervalSince(interruptionState.at) > interruptionOverrideWindow
+
+            writeClaudeDebugLog(
+                "refresh session=\(session.rawSessionID) hook=\(session.lastEvent):\(session.status)@\(session.lastActivityAt.timeIntervalSince1970) project=\(projectState?.lastEvent ?? "nil"):\(projectState?.status.debugLabel ?? "nil")@\(projectState?.at.timeIntervalSince1970 ?? 0) interrupt=\(interruptionState.at.timeIntervalSince1970) projectRunningAfterInterrupt=\(projectRunningAfterInterrupt) explicitHookRunningAfterInterrupt=\(explicitHookRunningAfterInterrupt)"
+            )
+
+            if !projectRunningAfterInterrupt && !explicitHookRunningAfterInterrupt {
+                return ClaudeTrackedSession(
+                    rawSessionID: session.rawSessionID,
+                    cwd: session.cwd,
+                    source: session.source,
+                    conversationSummary: session.conversationSummary,
+                    status: .idle,
+                    lastEvent: interruptionState.lastEvent,
+                    lastActivityAt: interruptionState.at
+                )
+            }
+        }
+
+        if session.status == .running,
+           let interruptionState,
+           interruptionState.at.timeIntervalSince(session.lastActivityAt) >= -interruptionOverrideWindow {
+            return ClaudeTrackedSession(
+                rawSessionID: session.rawSessionID,
+                cwd: session.cwd,
+                source: session.source,
+                conversationSummary: session.conversationSummary,
+                status: .idle,
+                lastEvent: interruptionState.lastEvent,
+                lastActivityAt: interruptionState.at
+            )
+        }
+
+        guard let projectState else {
+            return session
+        }
+
+        if session.status == .running,
+           projectState.status == .idle,
+           projectState.lastEvent != "interrupted" {
+            return session
+        }
+
+        if session.status == .running,
+           projectState.status == .idle,
+           projectState.at.timeIntervalSince(session.lastActivityAt) >= -interruptionOverrideWindow {
+            return ClaudeTrackedSession(
+                rawSessionID: session.rawSessionID,
+                cwd: session.cwd,
+                source: session.source,
+                conversationSummary: session.conversationSummary,
+                status: .idle,
+                lastEvent: projectState.lastEvent,
+                lastActivityAt: projectState.at
+            )
+        }
+
+        if projectState.at >= session.lastActivityAt {
+            return ClaudeTrackedSession(
+                rawSessionID: session.rawSessionID,
+                cwd: session.cwd,
+                source: session.source,
+                conversationSummary: session.conversationSummary,
+                status: projectState.status,
+                lastEvent: projectState.lastEvent,
+                lastActivityAt: projectState.at
+            )
+        }
+
+        if session.status != .running {
+            return ClaudeTrackedSession(
+                rawSessionID: session.rawSessionID,
+                cwd: session.cwd,
+                source: session.source,
+                conversationSummary: session.conversationSummary,
+                status: projectState.status,
+                lastEvent: projectState.lastEvent,
+                lastActivityAt: session.lastActivityAt
+            )
+        }
+
+        return ClaudeTrackedSession(
+            rawSessionID: session.rawSessionID,
+            cwd: session.cwd,
+            source: session.source,
+            conversationSummary: session.conversationSummary,
+            status: session.status,
+            lastEvent: session.lastEvent,
+            lastActivityAt: session.lastActivityAt
+        )
+    }
+
+    private func writeClaudeDebugLog(_ message: String) {
+        let line = "[\(Date().timeIntervalSince1970)] \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+
+        if !FileManager.default.fileExists(atPath: claudeDebugLogURL.path) {
+            _ = FileManager.default.createFile(atPath: claudeDebugLogURL.path, contents: data)
+            return
+        }
+
+        guard let handle = try? FileHandle(forWritingTo: claudeDebugLogURL) else {
+            return
+        }
+
+        defer {
+            try? handle.close()
+        }
+
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
     }
 
     private func readRecentLines(from fileURL: URL, maxBytes: Int) -> [Substring] {
@@ -1854,6 +2963,8 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         let content = """
         #!/usr/bin/env node
         const http = require("http");
+        const fs = require("fs");
+        const path = require("path");
 
         const EVENT_TO_STATE = {
           SessionStart: "idle",
@@ -1872,8 +2983,13 @@ private final class ClaudeHookBridge: @unchecked Sendable {
           Elicitation: "notification",
           WorktreeCreate: "carrying"
         };
+        const USAGE_CACHE_PATH = \(String(reflecting: claudeUsageCacheURL.path));
+        const STATUSLINE_DEBUG_PATH = \(String(reflecting: claudeStatusLineDebugURL.path));
 
         const event = process.argv[2];
+        if (event === "StatusLine") {
+          handleStatusLine();
+        }
         if (!EVENT_TO_STATE[event]) process.exit(0);
 
         const chunks = [];
@@ -1891,6 +3007,8 @@ private final class ClaudeHookBridge: @unchecked Sendable {
           try {
             payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           } catch {}
+
+          writeUsageSnapshot(payload);
 
           const body = JSON.stringify({
             event,
@@ -1923,8 +3041,139 @@ private final class ClaudeHookBridge: @unchecked Sendable {
           req.write(body);
           req.end();
         }
+
+        function handleStatusLine() {
+          const input = readAllStdin();
+          let payload = {};
+          try {
+            payload = JSON.parse(input);
+          } catch {}
+
+          writeStatusLineDebug(payload);
+          writeUsageSnapshot(payload);
+
+          const model = payload?.model?.display_name;
+          const contextRemaining = normalizePercentage(payload?.context_window?.remaining_percentage);
+          const parts = [];
+          if (typeof model === "string" && model.trim().length > 0) {
+            parts.push(model.trim());
+          }
+          if (contextRemaining != null) {
+            parts.push(`${Math.round(contextRemaining * 100)}% ctx`);
+          }
+          process.stdout.write(parts.join(" | "));
+          process.exit(0);
+        }
+
+        function readAllStdin() {
+          try {
+            return fs.readFileSync(0, "utf8");
+          } catch {
+            return "";
+          }
+        }
+
+        function writeUsageSnapshot(payload) {
+          const fiveHour = findWindow("five_hour", payload);
+          const sevenDay = findWindow("seven_day", payload);
+          if (!fiveHour && !sevenDay) return;
+
+          const usage = {};
+          if (fiveHour) usage.five_hour = fiveHour;
+          if (sevenDay) usage.seven_day = sevenDay;
+
+          try {
+            const directory = path.dirname(USAGE_CACHE_PATH);
+            fs.mkdirSync(directory, { recursive: true });
+            const tempPath = `${USAGE_CACHE_PATH}.tmp`;
+            fs.writeFileSync(tempPath, JSON.stringify(usage, null, 2), "utf8");
+            fs.renameSync(tempPath, USAGE_CACHE_PATH);
+          } catch {}
+        }
+
+        function writeStatusLineDebug(payload) {
+          try {
+            const directory = path.dirname(STATUSLINE_DEBUG_PATH);
+            fs.mkdirSync(directory, { recursive: true });
+            const tempPath = `${STATUSLINE_DEBUG_PATH}.tmp`;
+            fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf8");
+            fs.renameSync(tempPath, STATUSLINE_DEBUG_PATH);
+          } catch {}
+        }
+
+        function findWindow(targetKey, value) {
+          if (!value) return null;
+
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              const nested = findWindow(targetKey, item);
+              if (nested) return nested;
+            }
+            return null;
+          }
+
+          if (typeof value !== "object") return null;
+
+          if (Object.prototype.hasOwnProperty.call(value, targetKey)) {
+            return normalizeWindow(value[targetKey]);
+          }
+
+          for (const nestedValue of Object.values(value)) {
+            const nested = findWindow(targetKey, nestedValue);
+            if (nested) return nested;
+          }
+
+          return null;
+        }
+
+        function normalizeWindow(candidate) {
+          if (!candidate || typeof candidate !== "object") return null;
+
+          const rawPercentage = normalizePercentage(candidate.used_percentage ?? candidate.utilization);
+          if (rawPercentage == null) return null;
+
+          const normalized = { used_percentage: rawPercentage };
+          const resetsAt = normalizeDate(candidate.resets_at);
+          if (resetsAt) normalized.resets_at = resetsAt;
+          return normalized;
+        }
+
+        function normalizePercentage(value) {
+          if (value == null) return null;
+          const numeric = typeof value === "number" ? value : Number(value);
+          if (!Number.isFinite(numeric)) return null;
+          if (numeric > 1) return clamp(numeric / 100, 0, 1);
+          return clamp(numeric, 0, 1);
+        }
+
+        function normalizeDate(value) {
+          if (value == null) return null;
+          if (typeof value === "number" && Number.isFinite(value)) {
+            return new Date(value * 1000).toISOString();
+          }
+          if (typeof value === "string" && value.trim().length > 0) {
+            const timestamp = Number(value);
+            if (Number.isFinite(timestamp)) {
+              return new Date(timestamp * 1000).toISOString();
+            }
+
+            const parsed = new Date(value);
+            if (!Number.isNaN(parsed.getTime())) {
+              return parsed.toISOString();
+            }
+          }
+          return null;
+        }
+
+        function clamp(value, min, max) {
+          return Math.min(Math.max(value, min), max);
+        }
         """
         try content.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
     }
 
     private func syncClaudeSettings() throws {
@@ -1999,6 +3248,10 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
         var updatedSettings = settings
         updatedSettings["hooks"] = hooks
+        updatedSettings["statusLine"] = [
+            "type": "command",
+            "command": "\"\(nodePath)\" \"\(scriptPath)\" StatusLine"
+        ]
         try writeJSONObject(updatedSettings, to: settingsURL)
     }
 
@@ -2111,6 +3364,53 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         try data.write(to: url, options: .atomic)
     }
 
+    private func removeManagedHooks(from settingsURL: URL) throws {
+        let settings = try loadJSONObjectIfPresent(at: settingsURL) ?? [:]
+        let existingHooks = settings["hooks"] as? [String: Any]
+
+        var updatedHooks: [String: Any] = [:]
+        if let existingHooks {
+            for (event, value) in existingHooks {
+                let cleanedEntries = removingManagedHooks(from: value)
+                if !cleanedEntries.isEmpty {
+                    updatedHooks[event] = cleanedEntries
+                }
+            }
+        }
+
+        var updatedSettings = settings
+        if updatedHooks.isEmpty {
+            updatedSettings.removeValue(forKey: "hooks")
+        } else {
+            updatedSettings["hooks"] = updatedHooks
+        }
+
+        if let statusLine = settings["statusLine"] as? [String: Any],
+           isManagedStatusLine(statusLine) {
+            updatedSettings.removeValue(forKey: "statusLine")
+        }
+
+        try writeJSONObject(updatedSettings, to: settingsURL)
+    }
+
+    private func removingManagedHooks(from existingValue: Any?) -> [[String: Any]] {
+        let entries = (existingValue as? [[String: Any]]) ?? []
+        return entries.compactMap { entry in
+            guard var hooks = entry["hooks"] as? [[String: Any]] else {
+                return entry
+            }
+
+            hooks.removeAll(where: isManagedHook)
+            guard !hooks.isEmpty else {
+                return nil
+            }
+
+            var updated = entry
+            updated["hooks"] = hooks
+            return updated
+        }
+    }
+
     private func upsertCommandHook(into existingValue: Any?, command: String) -> [[String: Any]] {
         var entries = (existingValue as? [[String: Any]]) ?? []
         var found = false
@@ -2198,7 +3498,103 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         ]
     }
 
+    private func settingsContainsManagedHooks(_ settings: [String: Any]) -> Bool {
+        guard let hooks = settings["hooks"] as? [String: Any] else {
+            return false
+        }
+
+        let commandEvents = [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "StopFailure",
+            "Stop",
+            "SubagentStart",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
+            "Notification",
+            "Elicitation",
+            "WorktreeCreate"
+        ]
+
+        let hasManagedCommands = commandEvents.allSatisfy { event in
+            containsManagedCommandHook(hooks[event])
+        }
+        let hasManagedPermissionHook = containsManagedPermissionHook(hooks["PermissionRequest"])
+        let hasManagedStatusLine = containsManagedStatusLine(settings["statusLine"])
+        return hasManagedCommands && hasManagedPermissionHook && hasManagedStatusLine
+    }
+
+    private func containsManagedCommandHook(_ existingValue: Any?) -> Bool {
+        let entries = (existingValue as? [[String: Any]]) ?? []
+        for entry in entries {
+            guard let hooks = entry["hooks"] as? [[String: Any]] else {
+                continue
+            }
+
+            if hooks.contains(where: isManagedHook) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func containsManagedPermissionHook(_ existingValue: Any?) -> Bool {
+        let entries = (existingValue as? [[String: Any]]) ?? []
+        for entry in entries {
+            guard let hooks = entry["hooks"] as? [[String: Any]] else {
+                continue
+            }
+
+            if hooks.contains(where: { hook in
+                if let url = hook["url"] as? String {
+                    return ownedPermissionHookURLs.contains(url)
+                }
+                return false
+            }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func containsManagedStatusLine(_ value: Any?) -> Bool {
+        guard let statusLine = value as? [String: Any] else {
+            return false
+        }
+
+        return isManagedStatusLine(statusLine)
+    }
+
+    private func isManagedStatusLine(_ value: [String: Any]) -> Bool {
+        guard let command = value["command"] as? String else {
+            return false
+        }
+
+        return command.contains(hookMarker)
+    }
+
+    private func isManagedHook(_ hook: [String: Any]) -> Bool {
+        if let command = hook["command"] as? String, command.contains(hookMarker) {
+            return true
+        }
+
+        if let url = hook["url"] as? String, ownedPermissionHookURLs.contains(url) {
+            return true
+        }
+
+        return false
+    }
+
     private func resolveNodeBinary() -> String {
+        resolvedNodeBinaryPathIfAvailable() ?? "node"
+    }
+
+    private func resolvedNodeBinaryPathIfAvailable() -> String? {
         let fileManager = FileManager.default
         let candidates = [
             "/opt/homebrew/bin/node",
@@ -2229,7 +3625,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             }
         } catch {}
 
-        return "node"
+        return nil
     }
 
     private func describeClaudeHookConfigurationError(_ error: Error) -> String {
@@ -2255,12 +3651,31 @@ private enum ClaudeHookConfigurationError: Error {
     case syncFailed([String])
 }
 
+private struct ClaudeProjectDerivedState {
+    let status: ClaudeTrackedSession.Status
+    let lastEvent: String
+    let at: Date
+}
+
 private struct ClaudeTrackedSession {
     enum Status {
         case idle
         case running
         case success
         case failure
+
+        var debugLabel: String {
+            switch self {
+            case .idle:
+                return "idle"
+            case .running:
+                return "running"
+            case .success:
+                return "success"
+            case .failure:
+                return "failure"
+            }
+        }
 
         var isTerminal: Bool {
             switch self {
@@ -2430,5 +3845,56 @@ private struct ClaudeHistoryEntry: Decodable {
     private enum CodingKeys: String, CodingKey {
         case display
         case sessionID = "sessionId"
+    }
+}
+
+private struct ClaudeProjectHistoryEntry: Decodable {
+    struct Message: Decodable {
+        let content: ClaudeProjectHistoryContent
+    }
+
+    enum ClaudeProjectHistoryContent: Decodable {
+        case text(String)
+        case items([Item])
+
+        struct Item: Decodable {
+            let text: String?
+        }
+
+        init(from decoder: Decoder) throws {
+            let singleValueContainer = try decoder.singleValueContainer()
+            if let text = try? singleValueContainer.decode(String.self) {
+                self = .text(text)
+                return
+            }
+
+            if let items = try? singleValueContainer.decode([Item].self) {
+                self = .items(items)
+                return
+            }
+
+            self = .text("")
+        }
+    }
+
+    let sessionID: String
+    let message: Message?
+
+    var displayText: String {
+        guard let message else {
+            return ""
+        }
+
+        switch message.content {
+        case let .text(text):
+            return text
+        case let .items(items):
+            return items.compactMap(\.text).joined(separator: " ")
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID = "sessionId"
+        case message
     }
 }
