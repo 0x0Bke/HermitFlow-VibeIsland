@@ -2211,6 +2211,25 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         let incomingStatus = ClaudeTrackedSession.status(for: payload.event, state: payload.state)
 
         if let existing,
+           ClaudeTrackedSession.shouldPreserveExistingStatus(
+               existing.status,
+               forIncomingEvent: payload.event,
+               incomingStatus: incomingStatus
+           ) {
+            return ClaudeTrackedSession(
+                rawSessionID: existing.rawSessionID,
+                cwd: payload.cwd.isEmpty ? existing.cwd : payload.cwd,
+                source: payload.source.isEmpty ? existing.source : payload.source,
+                conversationSummary: existing.conversationSummary,
+                terminalClient: payload.terminalClient ?? existing.terminalClient,
+                terminalSessionHint: payload.terminalSessionHint ?? existing.terminalSessionHint,
+                status: existing.status,
+                lastEvent: payload.event,
+                lastActivityAt: now
+            )
+        }
+
+        if let existing,
            incomingStatus == .running,
            existing.status == .idle,
            !ClaudeTrackedSession.isExplicitRunningEvent(payload.event) {
@@ -3842,6 +3861,23 @@ private struct ClaudeTrackedSession {
         switch event {
         case "UserPromptSubmit", "PreToolUse", "SubagentStart", "PreCompact", "WorktreeCreate", "PermissionRequest":
             return true
+        default:
+            return false
+        }
+    }
+
+    static func shouldPreserveExistingStatus(
+        _ existingStatus: Status,
+        forIncomingEvent event: String,
+        incomingStatus: Status
+    ) -> Bool {
+        guard incomingStatus == .idle else {
+            return false
+        }
+
+        switch event {
+        case "Notification", "Elicitation":
+            return existingStatus == .running
         default:
             return false
         }

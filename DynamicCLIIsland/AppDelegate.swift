@@ -9,6 +9,12 @@ private final class IslandKeyboardWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+private final class IslandHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum ScreenPlacementMode: Equatable {
@@ -95,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.isReleasedWhenClosed = false
 
         let rootView = IslandRootView(store: store)
-        let hostingView = NSHostingView(rootView: rootView)
+        let hostingView = IslandHostingView(rootView: rootView)
         windowCoordinator.configure(window: window, with: hostingView)
         position(window: window, size: size, animation: nil)
         windowCoordinator.makeKeyAndOrderFront()
