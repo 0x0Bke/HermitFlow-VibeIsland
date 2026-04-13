@@ -25,6 +25,8 @@ final class ProgressStore: ObservableObject {
     private var lastClaudeUsageRefreshAt: Date?
     private var lastCodexUsageRefreshAt: Date?
 
+    var onOpenSettingsPanel: (() -> Void)?
+
     @Published private(set) var claudeUsageSnapshot: ClaudeUsageSnapshot?
     @Published private(set) var codexUsageSnapshot: CodexUsageSnapshot?
 
@@ -157,6 +159,10 @@ final class ProgressStore: ObservableObject {
 
     func toggleSoundMuted() {
         appStore.toggleSoundMuted()
+    }
+
+    func openSettingsPanel() {
+        onOpenSettingsPanel?()
     }
 
     func bringForward(_ target: FocusTarget?) {

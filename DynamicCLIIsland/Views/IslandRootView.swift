@@ -300,6 +300,7 @@ private extension IslandRootView {
 
                 HStack(spacing: 10) {
                     soundToggleButton
+                    settingsButton
 
                     compactStatusIcon
                         .frame(width: 18, height: 18)
@@ -319,6 +320,18 @@ private extension IslandRootView {
         }
         .buttonStyle(.plain)
         .help(store.isSoundMuted ? "Unmute notifications" : "Mute notifications")
+    }
+
+    var settingsButton: some View {
+        Button(action: store.openSettingsPanel) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.62))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show settings")
     }
 
     var sessionsSectionDivider: some View {
@@ -648,6 +661,7 @@ private extension IslandRootView {
         }
         .buttonStyle(.plain)
     }
+
 
     func approvalSectionBlock<Content: View>(
         title: String,

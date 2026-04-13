@@ -15,8 +15,129 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
+private struct SettingsPanelView: View {
+    struct ScreenOption: Identifiable {
+        let id: String
+        let title: String
+        let action: () -> Void
+    }
+
+    @ObservedObject var store: ProgressStore
+    let currentScreenTitle: () -> String
+    let screenOptions: () -> [ScreenOption]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            settingsTile(title: "Sound") {
+                Toggle("", isOn: soundMutedBinding)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .scaleEffect(0.76)
+            }
+
+            settingsTile(title: "Screen") {
+                Menu {
+                    ForEach(screenOptions()) { option in
+                        Button(option.title) {
+                            option.action()
+                        }
+                    }
+                } label: {
+                    pickerCapsule(title: currentScreenTitle(), width: 148)
+                }
+                .menuStyle(.borderlessButton)
+            }
+
+            settingsTile(title: "Logo") {
+                Menu {
+                    ForEach(availableLogos, id: \.rawValue) { logo in
+                        Button(logo.menuTitle) {
+                            store.selectLogo(logo)
+                        }
+                    }
+                } label: {
+                    pickerCapsule(title: store.selectedLogo.menuTitle, width: 118)
+                }
+                .menuStyle(.borderlessButton)
+            }
+        }
+        .padding(16)
+        .frame(width: 640, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.10, green: 0.11, blue: 0.13),
+                    Color(red: 0.05, green: 0.06, blue: 0.08)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    private func settingsTile<Accessory: View>(
+        title: String,
+        @ViewBuilder accessory: () -> Accessory
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            accessory()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func pickerCapsule(title: String, width: CGFloat) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(width: width, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.12))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+    }
+
+    private var soundMutedBinding: Binding<Bool> {
+        Binding(
+            get: { !store.isSoundMuted },
+            set: { isEnabled in
+                if store.isSoundMuted == isEnabled {
+                    store.toggleSoundMuted()
+                }
+            }
+        )
+    }
+
+    private var availableLogos: [IslandBrandLogo] {
+        [.hermit, .clawd, .zenmux, .claudeCodeColor, .codexColor, .codexMono, .openAI]
+    }
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private enum ScreenPlacementMode: Equatable {
         case automatic
         case fixed(CGDirectDisplayID)
@@ -29,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
     private var statusItem: NSStatusItem?
+    private var settingsPanel: NSWindow?
     private var visibilityMenuItem: NSMenuItem?
     private var screenMenuItem: NSMenuItem?
     private var automaticScreenMenuItem: NSMenuItem?
@@ -45,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let screenPlacementModeDefaultsKey = "HermitFlow.screenPlacementMode"
     private let fixedScreenIDDefaultsKey = "HermitFlow.fixedScreenID"
     private let debugLogURL = URL(fileURLWithPath: "/tmp/hermitflow-approval-debug.log")
+    private var mainWindowWasVisibleBeforeSettings = false
 
     private var windowCoordinator: IslandWindowCoordinator { environment.windowCoordinator }
     private var windowSizingCoordinator: WindowSizingCoordinator { environment.windowSizingCoordinator }
@@ -54,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         createWindow()
+        wireStoreActions()
         createStatusItem()
         registerScreenObservers()
         registerOutsideClickMonitors()
@@ -62,6 +186,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let settingsPanel else {
+            return false
+        }
+
+        if settingsPanel.isMiniaturized {
+            settingsPanel.deminiaturize(nil)
+        }
+
+        settingsPanel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -121,6 +259,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         self.window = window
+    }
+
+    private func wireStoreActions() {
+        store.onOpenSettingsPanel = { [weak self] in
+            self?.presentSettingsPanel()
+        }
+    }
+
+    private func presentSettingsPanel() {
+        mainWindowWasVisibleBeforeSettings = false
+        store.showIsland()
+        NSApp.setActivationPolicy(.regular)
+        keepIslandVisibleForSettings()
+
+        if let settingsPanel {
+            if settingsPanel.isMiniaturized {
+                settingsPanel.deminiaturize(nil)
+            }
+            settingsPanel.makeKeyAndOrderFront(nil)
+            keepIslandVisibleForSettings()
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let panel = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 224),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.title = "Settings"
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.isReleasedWhenClosed = false
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.level = .normal
+        panel.collectionBehavior = []
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        panel.delegate = self
+
+        let rootView = SettingsPanelView(
+            store: store,
+            currentScreenTitle: { [weak self] in
+                self?.currentScreenSelectionTitle ?? "Auto"
+            },
+            screenOptions: { [weak self] in
+                self?.settingsScreenOptions ?? []
+            }
+        )
+        panel.contentView = NSHostingView(rootView: rootView)
+        positionSettingsPanel(panel)
+        panel.makeKeyAndOrderFront(nil)
+        keepIslandVisibleForSettings()
+        NSApp.activate(ignoringOtherApps: true)
+        settingsPanel = panel
+    }
+
+    private func closeSettingsPanel() {
+        settingsPanel?.close()
+    }
+
+    private func positionSettingsPanel(_ panel: NSWindow) {
+        let panelSize = panel.frame.size
+        let referenceFrame = window?.frame ?? NSScreen.main?.visibleFrame ?? .zero
+        let visibleFrame = window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let originX = referenceFrame.midX - panelSize.width / 2
+        let preferredGap: CGFloat = 72
+        let minimumBottomMargin: CGFloat = 12
+        let preferredY = referenceFrame.minY - panelSize.height - preferredGap
+        let minimumY = visibleFrame.minY + minimumBottomMargin
+        let originY = max(preferredY, minimumY)
+        panel.setFrameOrigin(NSPoint(x: originX.rounded(), y: originY.rounded()))
+    }
+
+    private func keepIslandVisibleForSettings() {
+        guard let window else {
+            return
+        }
+
+        position(window: window, size: store.windowSize, animation: nil)
+        windowCoordinator.orderFront()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.settingsPanel != nil || NSApp.activationPolicy() == .regular else {
+                return
+            }
+
+            self.position(window: window, size: self.store.windowSize, animation: nil)
+            self.windowCoordinator.orderFront()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow, closingWindow === settingsPanel else {
+            return
+        }
+
+        mainWindowWasVisibleBeforeSettings = false
+        NSApp.setActivationPolicy(.accessory)
     }
 
     private func createStatusItem() {
@@ -643,6 +881,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.orderFrontRegardless()
         rebuildScreenMenu()
         updateMenuState()
+        store.objectWillChange.send()
     }
 
     private func rebuildScreenMenu() {
@@ -699,6 +938,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func isBuiltInDisplay(_ displayID: CGDirectDisplayID) -> Bool {
         CGDisplayIsBuiltin(displayID) != 0
+    }
+
+    private var currentScreenSelectionTitle: String {
+        switch screenPlacementMode {
+        case .automatic:
+            return "Auto"
+        case let .fixed(displayID):
+            guard let screen = screen(for: displayID) else {
+                return "Auto"
+            }
+
+            return titleForScreen(screen, displayID: displayID)
+        }
+    }
+
+    private var settingsScreenOptions: [SettingsPanelView.ScreenOption] {
+        var options: [SettingsPanelView.ScreenOption] = [
+            .init(id: "auto", title: "Auto") { [weak self] in
+                self?.setScreenPlacementMode(.automatic)
+            }
+        ]
+
+        options.append(contentsOf: NSScreen.screens.compactMap { screen in
+            guard let displayID = screen.displayID else {
+                return nil
+            }
+
+            return SettingsPanelView.ScreenOption(
+                id: String(displayID),
+                title: titleForScreen(screen, displayID: displayID)
+            ) { [weak self] in
+                self?.setScreenPlacementMode(.fixed(displayID))
+            }
+        })
+
+        return options
     }
 
     private var isWindowVisible: Bool {
@@ -811,6 +1086,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc
     private func handleActiveSpaceDidChange(_ notification: Notification) {
         guard let window else { return }
+        guard settingsPanel?.isVisible != true else { return }
 
         let shouldKeepPanelExpanded = store.isExpanded
         if shouldKeepPanelExpanded {
