@@ -206,20 +206,11 @@ struct IslandRootView: View {
 
     @ViewBuilder
     private var compactStatusIcon: some View {
-        switch store.codexStatus {
-        case .idle:
-            IdleStatusGlyph()
-        case .running:
-            if store.runningGlyphAnimationSuppressed {
-                StaticRunningStatusGlyph()
-            } else {
-                RunningStatusGlyph()
-            }
-        case .success:
-            SolidStatusGlyph(fill: Color(red: 96 / 255, green: 214 / 255, blue: 55 / 255), symbol: "checkmark")
-        case .failure:
-            SolidStatusGlyph(fill: Color(red: 220 / 255, green: 68 / 255, blue: 70 / 255), symbol: "xmark")
-        }
+        statusGlyph(for: store.codexStatus)
+            .id(statusGlyphIdentity)
+            .transition(.identity)
+            .animation(nil, value: store.codexStatus)
+            .animation(nil, value: store.runningGlyphAnimationSuppressed)
     }
 
     @ViewBuilder
@@ -270,6 +261,27 @@ struct IslandRootView: View {
         }
     }
 
+    @ViewBuilder
+    private func statusGlyph(for state: IslandCodexActivityState) -> some View {
+        switch state {
+        case .idle:
+            IdleStatusGlyph()
+        case .running:
+            if store.runningGlyphAnimationSuppressed {
+                StaticRunningStatusGlyph()
+            } else {
+                RunningStatusGlyph()
+            }
+        case .success:
+            SolidStatusGlyph(fill: Color(red: 96 / 255, green: 214 / 255, blue: 55 / 255), symbol: "checkmark")
+        case .failure:
+            SolidStatusGlyph(fill: Color(red: 220 / 255, green: 68 / 255, blue: 70 / 255), symbol: "xmark")
+        }
+    }
+
+    private var statusGlyphIdentity: String {
+        "\(store.codexStatus.rawValue)-\(store.runningGlyphAnimationSuppressed)"
+    }
 }
 
 private struct PanelTransition: Equatable {
@@ -963,44 +975,90 @@ private struct IdleStatusGlyph: View {
 }
 
 private struct RunningStatusGlyph: View {
-    @State private var isAnimating = false
-    private let accentColor = Color(red: 50 / 255, green: 150 / 255, blue: 1.0)
+    private let accentColor = Color(red: 42 / 255, green: 134 / 255, blue: 244 / 255)
+    private let highlightColor = Color(red: 88 / 255, green: 196 / 255, blue: 1.0)
+    private let coreColor = Color(red: 214 / 255, green: 238 / 255, blue: 1.0)
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(accentColor.opacity(0.24), lineWidth: 2.2)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { timeline in
+            let phase = pulsePhase(at: timeline.date)
+            let secondaryPhase = pulsePhase(at: timeline.date.addingTimeInterval(-0.42))
+            let coreGlow = 1.0 - phase
+            let trailingGlow = 1.0 - secondaryPhase
 
-            Circle()
-                .trim(from: 0.12, to: 0.72)
-                .stroke(
-                    accentColor,
-                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
-                )
-                .rotationEffect(.degrees(isAnimating ? 360 : 0))
+            ZStack {
+                pulseRing(progress: secondaryPhase, lineWidth: 1.15, baseOpacity: 0.30)
+                pulseRing(progress: phase, lineWidth: 1.9, baseOpacity: 0.48)
+
+                Circle()
+                    .fill(highlightColor.opacity(0.10 + coreGlow * 0.08 + trailingGlow * 0.04))
+                    .frame(width: 10.8, height: 10.8)
+                    .blur(radius: 0.55)
+
+                Circle()
+                    .fill(accentColor)
+                    .frame(width: 6.5, height: 6.5)
+                    .shadow(color: accentColor.opacity(0.44 + coreGlow * 0.18), radius: 5.4 + coreGlow * 0.8)
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                coreColor.opacity(0.92),
+                                highlightColor.opacity(0.70),
+                                accentColor.opacity(0.14)
+                            ],
+                            center: .center,
+                            startRadius: 0.1,
+                            endRadius: 3.6
+                        )
+                    )
+                    .frame(width: 4.3 + coreGlow * 0.45, height: 4.3 + coreGlow * 0.45)
+
+                Circle()
+                    .fill(.white.opacity(0.22 + coreGlow * 0.10))
+                    .frame(width: 2.2, height: 2.2)
+                    .blur(radius: 0.12)
+                    .offset(x: -0.8, y: -0.8)
+            }
+            .frame(width: 15, height: 15)
         }
-        .frame(width: 15, height: 15)
-        .animation(.linear(duration: 0.95).repeatForever(autoreverses: false), value: isAnimating)
-        .onAppear {
-            isAnimating = true
-        }
+    }
+
+    private func pulseRing(progress: Double, lineWidth: CGFloat, baseOpacity: Double) -> some View {
+        return Circle()
+            .stroke(highlightColor.opacity(baseOpacity * (1 - progress)), lineWidth: lineWidth)
+            .frame(width: 6.5, height: 6.5)
+            .scaleEffect(0.9 + progress * 1.55)
+            .blur(radius: 0.08 + progress * 0.4)
+    }
+
+    private func pulsePhase(at date: Date) -> Double {
+        let cycleDuration = 1.28
+        let elapsed = date.timeIntervalSinceReferenceDate
+        let normalized = elapsed.truncatingRemainder(dividingBy: cycleDuration) / cycleDuration
+        return normalized
     }
 }
 
 private struct StaticRunningStatusGlyph: View {
-    private let accentColor = Color(red: 50 / 255, green: 150 / 255, blue: 1.0)
+    private let accentColor = Color(red: 42 / 255, green: 134 / 255, blue: 244 / 255)
+    private let highlightColor = Color(red: 88 / 255, green: 196 / 255, blue: 1.0)
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(accentColor.opacity(0.24), lineWidth: 2.2)
+                .stroke(highlightColor.opacity(0.18), lineWidth: 1.4)
+                .frame(width: 10.5, height: 10.5)
 
             Circle()
-                .trim(from: 0.12, to: 0.72)
-                .stroke(
-                    accentColor,
-                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
-                )
+                .fill(highlightColor.opacity(0.14))
+                .frame(width: 8.5, height: 8.5)
+
+            Circle()
+                .fill(accentColor)
+                .frame(width: 6.5, height: 6.5)
+                .shadow(color: accentColor.opacity(0.30), radius: 2.8)
         }
         .frame(width: 15, height: 15)
     }
