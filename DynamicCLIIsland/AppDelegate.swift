@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Darwin
 import Foundation
 import SwiftUI
 
@@ -75,6 +76,78 @@ private struct PlainJSONEditor: NSViewRepresentable {
     }
 }
 
+private struct ProviderAuthEnvKeyRow: Identifiable, Equatable {
+    let id: String
+    let authEnvKey: String
+}
+
+private struct ProviderAuthEnvKeyFieldRow: View {
+    let row: ProviderAuthEnvKeyRow
+    let refreshToken: Int
+    let onSubmit: (String, String) -> Void
+
+    @State private var input = ""
+    @State private var lastSubmitted = ""
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(row.id)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.82))
+                .frame(width: 112, alignment: .leading)
+
+            TextField("ANTHROPIC_AUTH_TOKEN", text: $input)
+                .textFieldStyle(.roundedBorder)
+        }
+        .onAppear {
+            syncFromRow(force: true)
+        }
+        .onChange(of: input) { _, _ in
+            scheduleSubmit()
+        }
+        .onChange(of: row.authEnvKey) { _, _ in
+            syncFromRow(force: false)
+        }
+        .onChange(of: refreshToken) { _, _ in
+            syncFromRow(force: false)
+        }
+        .onDisappear {
+            submit()
+        }
+    }
+
+    private func syncFromRow(force: Bool) {
+        let normalizedValue = normalized(row.authEnvKey)
+        if force || normalized(input) == lastSubmitted {
+            input = normalizedValue
+            lastSubmitted = normalizedValue
+        }
+    }
+
+    private func scheduleSubmit() {
+        let snapshot = input
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard snapshot == input else {
+                return
+            }
+            submit()
+        }
+    }
+
+    private func submit() {
+        let normalizedInput = normalized(input)
+        guard normalizedInput != lastSubmitted else {
+            return
+        }
+        lastSubmitted = normalizedInput
+        onSubmit(row.id, normalizedInput)
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 private struct SettingsPanelView: View {
     struct ScreenOption: Identifiable {
         let id: String
@@ -87,10 +160,15 @@ private struct SettingsPanelView: View {
     let screenOptions: () -> [ScreenOption]
     let claudeSettingsJSONText: () -> String
     let onClaudeSettingsJSONSubmit: (String) -> Void
+    let providerAuthRows: () -> [ProviderAuthEnvKeyRow]
+    let providerAuthRefreshToken: () -> Int
+    let onProviderAuthEnvKeySubmit: (String, String) -> Void
     @State private var claudeSettingsInput = ""
     @State private var claudeSettingsLastSubmitted = ""
 
     var body: some View {
+        let authRows = providerAuthRows()
+
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
                 settingsTile(title: "Sound") {
@@ -125,6 +203,30 @@ private struct SettingsPanelView: View {
                     }
                     .menuStyle(.borderlessButton)
                 }
+            }
+
+            settingsTile(title: "usage-auth", minHeight: 176) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(authRows) { row in
+                            ProviderAuthEnvKeyFieldRow(
+                                row: row,
+                                refreshToken: providerAuthRefreshToken(),
+                                onSubmit: onProviderAuthEnvKeySubmit
+                            )
+                        }
+                    }
+                    .padding(12)
+                }
+                .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 188, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.045))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                )
             }
 
             settingsTile(title: "cc-paths", minHeight: 176) {
@@ -286,6 +388,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var globalMouseMonitor: Any?
     private var statusItem: NSStatusItem?
     private var settingsPanel: NSWindow?
+    private var providerConfigMonitor: DispatchSourceFileSystemObject?
+    private var providerConfigMonitorFileDescriptor: CInt = -1
+    private var providerConfigPollTimer: Timer?
+    private var providerConfigLastKnownModificationDate: Date?
+    private var providerConfigRefreshToken = 0
     private var visibilityMenuItem: NSMenuItem?
     private var screenMenuItem: NSMenuItem?
     private var automaticScreenMenuItem: NSMenuItem?
@@ -418,11 +525,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             settingsPanel.makeKeyAndOrderFront(nil)
             keepIslandVisibleForSettings()
             NSApp.activate(ignoringOtherApps: true)
+            startProviderConfigSync()
             return
         }
 
         let panel = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 812, height: 244),
+            contentRect: NSRect(x: 0, y: 0, width: 812, height: 438),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -444,6 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         keepIslandVisibleForSettings()
         NSApp.activate(ignoringOtherApps: true)
         settingsPanel = panel
+        startProviderConfigSync()
     }
 
     private func makeSettingsPanelView() -> SettingsPanelView {
@@ -460,6 +569,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             },
             onClaudeSettingsJSONSubmit: { [weak self] value in
                 self?.updateClaudeSettingsJSON(from: value)
+            },
+            providerAuthRows: { [weak self] in
+                self?.claudeProviderAuthRows ?? []
+            },
+            providerAuthRefreshToken: { [weak self] in
+                self?.providerConfigRefreshToken ?? 0
+            },
+            onProviderAuthEnvKeySubmit: { [weak self] providerID, value in
+                self?.updateClaudeProviderUsageAuthEnvKey(providerID: providerID, value: value)
             }
         )
     }
@@ -504,6 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             return
         }
 
+        stopProviderConfigSync()
         mainWindowWasVisibleBeforeSettings = false
         NSApp.setActivationPolicy(.accessory)
     }
@@ -1127,6 +1246,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         loadClaudeSettingsJSONText()
     }
 
+    private var claudeProviderAuthRows: [ProviderAuthEnvKeyRow] {
+        loadClaudeProviderUsageConfigForSettings().providers.map { provider in
+            ProviderAuthEnvKeyRow(
+                id: provider.id,
+                authEnvKey: provider.usageRequest.authEnvKey ?? ""
+            )
+        }
+    }
+
     private func updateClaudeSettingsJSON(from rawInput: String) {
         do {
             try FileManager.default.createDirectory(
@@ -1156,6 +1284,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             debugLog("Failed to load Claude settings JSON: \(error.localizedDescription)")
             return "{\n  \"paths\": []\n}"
         }
+    }
+
+    private func loadClaudeProviderUsageConfigForSettings() -> ClaudeProviderUsageConfig {
+        let decoder = JSONDecoder()
+
+        guard FileManager.default.fileExists(atPath: FilePaths.claudeProviderUsageConfig.path) else {
+            return ClaudeProviderUsageConfig.defaultConfig
+        }
+
+        do {
+            let data = try Data(contentsOf: FilePaths.claudeProviderUsageConfig)
+            return try decoder.decode(ClaudeProviderUsageConfig.self, from: data)
+        } catch {
+            debugLog("Failed to load Claude provider usage config, falling back to defaults: \(error.localizedDescription)")
+            return ClaudeProviderUsageConfig.defaultConfig
+        }
+    }
+
+    private func updateClaudeProviderUsageAuthEnvKey(providerID: String, value: String) {
+        do {
+            try FileManager.default.createDirectory(
+                at: FilePaths.hermitFlowHome,
+                withIntermediateDirectories: true
+            )
+
+            var config = loadClaudeProviderUsageConfigForSettings()
+            guard let index = config.providers.firstIndex(where: { $0.id == providerID }) else {
+                return
+            }
+
+            let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            config.providers[index].usageRequest.authEnvKey = normalizedValue.isEmpty ? nil : normalizedValue
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(config)
+            try data.write(to: FilePaths.claudeProviderUsageConfig, options: .atomic)
+
+            restartProviderConfigMonitor()
+            refreshProviderConfigState()
+        } catch {
+            debugLog("Failed to write Claude provider usage config: \(error.localizedDescription)")
+        }
+    }
+
+    private func startProviderConfigSync() {
+        refreshProviderConfigState()
+        startProviderConfigPollTimer()
+        restartProviderConfigMonitor()
+    }
+
+    private func stopProviderConfigSync() {
+        providerConfigMonitor?.cancel()
+        providerConfigMonitor = nil
+
+        if providerConfigMonitorFileDescriptor >= 0 {
+            close(providerConfigMonitorFileDescriptor)
+            providerConfigMonitorFileDescriptor = -1
+        }
+
+        providerConfigPollTimer?.invalidate()
+        providerConfigPollTimer = nil
+        providerConfigLastKnownModificationDate = nil
+    }
+
+    private func startProviderConfigPollTimer() {
+        providerConfigPollTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pollProviderConfigChanges()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        providerConfigPollTimer = timer
+    }
+
+    private func pollProviderConfigChanges() {
+        let currentModificationDate = providerConfigModificationDate()
+        if currentModificationDate != providerConfigLastKnownModificationDate {
+            refreshProviderConfigState()
+            restartProviderConfigMonitor()
+        } else if providerConfigMonitor == nil && FileManager.default.fileExists(atPath: FilePaths.claudeProviderUsageConfig.path) {
+            restartProviderConfigMonitor()
+        }
+    }
+
+    private func restartProviderConfigMonitor() {
+        providerConfigMonitor?.cancel()
+        providerConfigMonitor = nil
+
+        if providerConfigMonitorFileDescriptor >= 0 {
+            close(providerConfigMonitorFileDescriptor)
+            providerConfigMonitorFileDescriptor = -1
+        }
+
+        let path = FilePaths.claudeProviderUsageConfig.path
+        guard FileManager.default.fileExists(atPath: path) else {
+            return
+        }
+
+        let fileDescriptor = open(path, O_EVTONLY)
+        guard fileDescriptor >= 0 else {
+            return
+        }
+
+        providerConfigMonitorFileDescriptor = fileDescriptor
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileDescriptor,
+            eventMask: [.write, .delete, .rename, .attrib],
+            queue: DispatchQueue.main
+        )
+        source.setEventHandler { [weak self] in
+            self?.handleProviderConfigFilesystemEvent()
+        }
+        source.setCancelHandler { [weak self] in
+            guard let self else { return }
+            if self.providerConfigMonitorFileDescriptor >= 0 {
+                close(self.providerConfigMonitorFileDescriptor)
+                self.providerConfigMonitorFileDescriptor = -1
+            }
+        }
+        providerConfigMonitor = source
+        source.resume()
+    }
+
+    private func handleProviderConfigFilesystemEvent() {
+        refreshProviderConfigState()
+        restartProviderConfigMonitor()
+    }
+
+    private func refreshProviderConfigState() {
+        providerConfigLastKnownModificationDate = providerConfigModificationDate()
+        providerConfigRefreshToken &+= 1
+        store.objectWillChange.send()
+    }
+
+    private func providerConfigModificationDate() -> Date? {
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: FilePaths.claudeProviderUsageConfig.path
+        ) else {
+            return nil
+        }
+
+        return attributes[.modificationDate] as? Date
     }
 
     private var isWindowVisible: Bool {
