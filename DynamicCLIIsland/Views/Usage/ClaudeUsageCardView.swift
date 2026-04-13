@@ -15,12 +15,8 @@ struct ClaudeUsageCardView: View {
             header
 
             HStack(spacing: 12) {
-                if let fiveHour = snapshot.fiveHour {
-                    metricCard(title: "5h", window: fiveHour, subtitle: "5 hour window")
-                }
-
-                if let sevenDay = snapshot.sevenDay {
-                    metricCard(title: "7d", window: sevenDay, subtitle: "7 day window")
+                ForEach(snapshot.displayWindows, id: \.id) { item in
+                    metricCard(title: item.label, window: item.window, subtitle: subtitle(for: item))
                 }
             }
         }
@@ -67,6 +63,19 @@ struct ClaudeUsageCardView: View {
         }
 
         return "Claude Code"
+    }
+
+    private func subtitle(for item: ClaudeLabeledUsageWindow) -> String {
+        switch item.id {
+        case "five_hour":
+            return "5 hour window"
+        case "seven_day":
+            return "7 day window"
+        case "day":
+            return "Daily usage"
+        default:
+            return "\(item.label) window"
+        }
     }
 
     private func metricCard(title: String, window: ClaudeUsageWindow, subtitle: String) -> some View {

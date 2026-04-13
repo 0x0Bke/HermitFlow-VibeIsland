@@ -369,13 +369,7 @@ private extension IslandRootView {
     var usageBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let claudeUsageSnapshot = store.claudeUsageSnapshot, !claudeUsageSnapshot.isEmpty {
-                usageProviderRow(
-                    title: claudeUsageTitle(for: claudeUsageSnapshot),
-                    shortLabel: "5h",
-                    shortValue: claudeUsageSnapshot.fiveHour?.leftPercentage,
-                    longLabel: "wk",
-                    longValue: claudeUsageSnapshot.sevenDay?.leftPercentage
-                )
+                claudeUsageProviderRow(snapshot: claudeUsageSnapshot)
             }
 
             if let codexUsageSnapshot = store.codexUsageSnapshot, !codexUsageSnapshot.isEmpty {
@@ -408,6 +402,21 @@ private extension IslandRootView {
         }
     }
 
+    func claudeUsageProviderRow(snapshot: ClaudeUsageSnapshot) -> some View {
+        let windows = Array(snapshot.displayWindows.prefix(2))
+
+        return HStack(alignment: .center, spacing: 10) {
+            Text(claudeUsageTitle(for: snapshot))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.78))
+                .frame(width: 108, alignment: .leading)
+
+            ForEach(windows, id: \.id) { item in
+                usageMetricChip(label: item.label, value: item.window.leftPercentage)
+            }
+        }
+    }
+
     func claudeUsageTitle(for snapshot: ClaudeUsageSnapshot) -> String {
         if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
             return "Claude · \(providerDisplayName)"
@@ -421,7 +430,9 @@ private extension IslandRootView {
             Text(label)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.white.opacity(0.52))
-                .frame(width: 18, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 18, alignment: .leading)
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {

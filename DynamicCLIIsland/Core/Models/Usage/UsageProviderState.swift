@@ -35,11 +35,12 @@ struct UsageProviderState: Equatable, Hashable {
         var snapshots: [ProviderUsageSnapshot] = []
 
         if let claude, !claude.isEmpty {
+            let displayWindows = claude.displayWindows
             snapshots.append(
                 ProviderUsageSnapshot(
                     origin: .claude,
-                    shortWindowRemaining: claude.fiveHour?.leftPercentage ?? 0,
-                    longWindowRemaining: claude.sevenDay?.leftPercentage ?? 0,
+                    shortWindowRemaining: displayWindows.first?.window.leftPercentage ?? 0,
+                    longWindowRemaining: displayWindows.dropFirst().first?.window.leftPercentage ?? 0,
                     updatedAt: claude.cachedAt ?? .distantPast
                 )
             )

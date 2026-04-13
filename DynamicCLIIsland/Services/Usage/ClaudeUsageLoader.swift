@@ -10,6 +10,7 @@ import Foundation
 enum ClaudeUsageLoader {
     private static let customSettingsPathsEnvironmentKey = "HERMITFLOW_CLAUDE_SETTINGS_PATHS"
     private static let requestTimeout: TimeInterval = 5
+    private static let defaultCommandTimeout: TimeInterval = 5
 
     static func load() throws -> ClaudeUsageSnapshot? {
         try ensureProviderConfigFileExists()
@@ -19,7 +20,13 @@ enum ClaudeUsageLoader {
             return applyingProviderMetadata(provider, to: cachedSnapshot, sourceKind: .localCache)
         }
 
-        guard let provider = try resolveProvider() else {
+        let config = try loadProviderConfig()
+
+        if let usageCommand = config.usageCommand {
+            return try loadCommandUsageSnapshot(definition: usageCommand)
+        }
+
+        guard let provider = try resolveProvider(config: config) else {
             return nil
         }
 
@@ -43,6 +50,7 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: parseWindow(named: "five_hour", from: jsonObject),
             sevenDay: parseWindow(named: "seven_day", from: jsonObject),
+            customWindows: [],
             cachedAt: cachedAt,
             providerID: nil,
             providerDisplayName: nil,
@@ -69,6 +77,7 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: fiveHour ?? fallbackWindow,
             sevenDay: sevenDay,
+            customWindows: [],
             cachedAt: Date(),
             providerID: provider.id,
             providerDisplayName: provider.displayName,
@@ -134,6 +143,7 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: fiveHour,
             sevenDay: sevenDay,
+            customWindows: [],
             cachedAt: Date(),
             providerID: provider.id,
             providerDisplayName: provider.displayName,
@@ -186,6 +196,7 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: fiveHour,
             sevenDay: sevenDay,
+            customWindows: [],
             cachedAt: Date(),
             providerID: provider.id,
             providerDisplayName: provider.displayName,
@@ -223,6 +234,7 @@ enum ClaudeUsageLoader {
         let snapshot = ClaudeUsageSnapshot(
             fiveHour: fiveHour,
             sevenDay: nil,
+            customWindows: [],
             cachedAt: Date(),
             providerID: provider.id,
             providerDisplayName: provider.displayName,
@@ -315,11 +327,55 @@ enum ClaudeUsageLoader {
         ClaudeUsageSnapshot(
             fiveHour: snapshot.fiveHour,
             sevenDay: snapshot.sevenDay,
+            customWindows: snapshot.customWindows,
             cachedAt: snapshot.cachedAt,
             providerID: provider?.id,
             providerDisplayName: provider?.displayName,
             sourceKind: sourceKind
         )
+    }
+
+    private static func loadCommandUsageSnapshot(definition usageCommand: ClaudeProviderUsageCommand) throws -> ClaudeUsageSnapshot? {
+        guard let commandOutput = runUsageCommand(usageCommand),
+              let percentageValue = normalizedPercentageString(commandOutput),
+              let usedPercentage = usedPercentage(from: percentageValue, valueKind: usageCommand.valueKind) else {
+            Logger.log(
+                "Claude usage command returned no usable percentage.",
+                category: .source
+            )
+            return nil
+        }
+
+        let window = ClaudeUsageWindow(usedPercentage: usedPercentage, resetsAt: nil)
+        let labeledWindow = ClaudeLabeledUsageWindow(
+            id: usageCommand.window.rawValue,
+            label: usageCommand.displayLabel ?? usageCommand.window.defaultLabel,
+            window: window
+        )
+
+        let snapshot = ClaudeUsageSnapshot(
+            fiveHour: nil,
+            sevenDay: nil,
+            customWindows: [labeledWindow],
+            cachedAt: Date(),
+            providerID: nil,
+            providerDisplayName: nil,
+            sourceKind: .remoteProvider
+        )
+
+        return snapshot.isEmpty ? nil : snapshot
+    }
+
+    private static func usedPercentage(
+        from percentageValue: Double,
+        valueKind: ClaudeProviderUsageCommandValueKind
+    ) -> Double? {
+        switch valueKind {
+        case .usedPercentage:
+            return percentageValue
+        case .remainingPercentage:
+            return max(0, 1 - percentageValue)
+        }
     }
 
     private static func fetchUsageResponse(for provider: ResolvedClaudeProvider) throws -> Any? {
@@ -407,8 +463,8 @@ enum ClaudeUsageLoader {
         }
     }
 
-    private static func resolveProvider() throws -> ResolvedClaudeProvider? {
-        let config = try loadProviderConfig()
+    private static func resolveProvider(config: ClaudeProviderUsageConfig? = nil) throws -> ResolvedClaudeProvider? {
+        let config = try config ?? loadProviderConfig()
         let settingsCandidates = try resolvedClaudeSettingsCandidates()
         let statusLine = loadStatusLineDebug()
 
@@ -814,6 +870,30 @@ enum ClaudeUsageLoader {
         return min(max(rawValue, 0), 1)
     }
 
+    private static func normalizedPercentageString(_ value: String) -> Double? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let normalizedInput: String
+        if trimmed.hasSuffix("%") {
+            normalizedInput = String(trimmed.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            normalizedInput = trimmed
+        }
+
+        guard let rawValue = Double(normalizedInput) else {
+            return nil
+        }
+
+        if rawValue > 1 {
+            return min(max(rawValue / 100, 0), 1)
+        }
+
+        return min(max(rawValue, 0), 1)
+    }
+
     private static func numericValue(_ value: Any?) -> Double? {
         switch value {
         case let number as NSNumber:
@@ -861,6 +941,74 @@ enum ClaudeUsageLoader {
         }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func runUsageCommand(_ definition: ClaudeProviderUsageCommand) -> String? {
+        let trimmedCommand = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCommand.isEmpty else {
+            Logger.log("Claude usage command is empty.", category: .source)
+            return nil
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", trimmedCommand]
+        process.environment = ProcessInfo.processInfo.environment
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            Logger.log(
+                "Claude usage command failed to launch: \(error.localizedDescription)",
+                category: .source
+            )
+            return nil
+        }
+
+        let timeout = definition.timeoutSeconds ?? defaultCommandTimeout
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        if process.isRunning {
+            process.terminate()
+            Logger.log(
+                "Claude usage command timed out after \(timeout)s.",
+                category: .source
+            )
+            return nil
+        }
+
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+        guard process.terminationStatus == 0 else {
+            let stderrText = String(data: stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Logger.log(
+                "Claude usage command exited with status \(process.terminationStatus). \(stderrText)",
+                category: .source
+            )
+            return nil
+        }
+
+        guard let stdoutText = String(data: stdoutData, encoding: .utf8) else {
+            Logger.log("Claude usage command output is not UTF-8.", category: .source)
+            return nil
+        }
+
+        let firstLine = stdoutText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+
+        return firstLine
     }
 }
 
@@ -929,9 +1077,37 @@ struct ResolvedClaudeProvider: Hashable {
 }
 
 struct ClaudeProviderUsageConfig: Codable, Hashable {
+    var usageCommand: ClaudeProviderUsageCommand?
     var providers: [ClaudeProviderDefinition]
 
+    enum CodingKeys: String, CodingKey {
+        case usageCommand
+        case providers
+    }
+
+    init(usageCommand: ClaudeProviderUsageCommand?, providers: [ClaudeProviderDefinition]) {
+        self.usageCommand = usageCommand
+        self.providers = providers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        usageCommand = try container.decodeIfPresent(ClaudeProviderUsageCommand.self, forKey: .usageCommand)
+        providers = try container.decode([ClaudeProviderDefinition].self, forKey: .providers)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let usageCommand {
+            try container.encode(usageCommand, forKey: .usageCommand)
+        } else {
+            try container.encodeNil(forKey: .usageCommand)
+        }
+        try container.encode(providers, forKey: .providers)
+    }
+
     static let defaultConfig = ClaudeProviderUsageConfig(
+        usageCommand: nil,
         providers: [
             ClaudeProviderDefinition(
                 id: "kimi",
@@ -1107,6 +1283,46 @@ struct ClaudeProviderDefinition: Codable, Hashable {
     var match: ClaudeProviderMatchRule
     var usageRequest: ClaudeProviderUsageRequest
     var responseMapping: ClaudeProviderResponseMapping
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName
+        case match
+        case usageRequest
+        case responseMapping
+    }
+
+    init(
+        id: String,
+        displayName: String,
+        match: ClaudeProviderMatchRule,
+        usageRequest: ClaudeProviderUsageRequest,
+        responseMapping: ClaudeProviderResponseMapping
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.match = match
+        self.usageRequest = usageRequest
+        self.responseMapping = responseMapping
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        match = try container.decode(ClaudeProviderMatchRule.self, forKey: .match)
+        usageRequest = try container.decode(ClaudeProviderUsageRequest.self, forKey: .usageRequest)
+        responseMapping = try container.decode(ClaudeProviderResponseMapping.self, forKey: .responseMapping)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encode(match, forKey: .match)
+        try container.encode(usageRequest, forKey: .usageRequest)
+        try container.encode(responseMapping, forKey: .responseMapping)
+    }
 }
 
 struct ClaudeProviderMatchRule: Codable, Hashable {
@@ -1124,6 +1340,30 @@ struct ClaudeProviderUsageRequest: Codable, Hashable {
     var headers: [String: String]?
     var query: [String: String]?
     var body: [String: String]?
+}
+
+enum ClaudeProviderUsageCommandWindow: String, Codable, Hashable {
+    case day
+
+    var defaultLabel: String {
+        switch self {
+        case .day:
+            return "day"
+        }
+    }
+}
+
+enum ClaudeProviderUsageCommandValueKind: String, Codable, Hashable {
+    case usedPercentage
+    case remainingPercentage
+}
+
+struct ClaudeProviderUsageCommand: Codable, Hashable {
+    var command: String
+    var window: ClaudeProviderUsageCommandWindow
+    var valueKind: ClaudeProviderUsageCommandValueKind
+    var timeoutSeconds: TimeInterval?
+    var displayLabel: String?
 }
 
 struct ClaudeProviderResponseMapping: Codable, Hashable {

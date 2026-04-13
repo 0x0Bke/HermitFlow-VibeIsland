@@ -150,10 +150,12 @@ The usage section is local-first and optional:
 - no usage file: the panel still works and the usage rows are omitted
 - stale or malformed usage file: the panel still works and the invalid provider row is omitted
 - supported third-party provider detected with valid remote quota: the Claude row/card is labeled as `Claude · <Provider>`
+- if `~/.hermitflow/claude-provider-usage.json` defines a top-level command-based usage query, HermitFlow uses only that command for Claude usage
+- if that command fails, times out, or returns an invalid percentage, Claude usage is hidden and HermitFlow does not fall back to the provider HTTP request
 
 The current UI shows remaining quota rather than used quota.
 
-For Claude, usage visibility depends on either the local payload shape or a supported third-party provider response. Official Claude-style `rate_limits.five_hour` and `rate_limits.seven_day` fields are rendered as `5h` and `wk`. Some third-party Anthropic-compatible models expose only context-window data or omit rate-limit fields entirely, in which case Claude usage will be absent even though Claude activity and approvals still work.
+For Claude, usage visibility depends on either the local payload shape, a top-level command-based usage query in `~/.hermitflow/claude-provider-usage.json`, or a supported third-party provider response. Official Claude-style `rate_limits.five_hour` and `rate_limits.seven_day` fields are rendered as `5h` and `wk`. Command-based queries can also emit a custom `day` window; when present, the Claude UI shows only `day` and hides the default `5h` / `wk` labels. Some third-party Anthropic-compatible models expose only context-window data or omit rate-limit fields entirely, in which case Claude usage will be absent even though Claude activity and approvals still work.
 
 ### Third-Party Claude Providers
 
@@ -181,6 +183,11 @@ Current built-in default endpoints:
 - `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
 - `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
 
+The config file can define:
+
+- one optional top-level command-based usage query
+- the list of provider match rules and HTTP usage queries
+
 Each provider entry defines:
 
 - how the provider is matched
@@ -189,6 +196,26 @@ Each provider entry defines:
 - what request headers/query/body to send
 - which `authEnvKey` to use for `Authorization: Bearer <token>`
 - how to map the response into Claude `5h` / `wk` windows
+
+Command-based usage queries are useful when Claude quota is only available through a local CLI wrapper. When the top-level `usageCommand` is present, HermitFlow skips provider detection and uses only that command. Example:
+
+```json
+{
+  "usageCommand": {
+    "command": "echo '{}' | ~/xxx/hook-cli cc_statusLine | awk '{print $NF}'",
+    "window": "day",
+    "valueKind": "usedPercentage",
+    "displayLabel": "day",
+    "timeoutSeconds": 5
+  },
+  "providers": []
+}
+```
+
+`valueKind` currently supports:
+
+- `usedPercentage`: command output is already the used ratio/percentage
+- `remainingPercentage`: command output is the remaining ratio/percentage, and HermitFlow converts it to used percentage internally
 
 `authEnvKey` supports two forms:
 

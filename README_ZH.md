@@ -150,10 +150,12 @@ HermitFlow 也支持从自己管理的本地缓存文件读取 Claude 额度：
 - 没有额度文件：面板正常工作，只是不显示额度行
 - 额度文件损坏或格式不兼容：面板正常工作，只是不显示对应 provider 的额度行
 - 若识别到受支持的三方 provider 且远程额度查询成功：Claude 行/卡片会显示为 `Claude · <Provider>`
+- 若 `~/.hermitflow/claude-provider-usage.json` 顶层配置了命令式额度查询：HermitFlow 会只执行这个命令来获取 Claude 额度
+- 若该命令执行失败、超时或返回非法百分比：Claude 额度会直接隐藏，且不会回退到 provider HTTP 接口
 
 当前 UI 展示的是剩余额度，而不是已使用额度。
 
-对于 Claude，是否能显示额度取决于本地 payload 形状或受支持 provider 的响应结构。只有当上游 payload 提供官方 Claude 风格的 `rate_limits.five_hour` 与 `rate_limits.seven_day`，或者三方 provider 响应能被映射为兼容窗口时，HermitFlow 才会显示 `5h` / `wk`。某些第三方 Anthropic 兼容模型只提供 context window 信息，或者完全不提供 rate limit 字段，此时 Claude 活动和审批仍然可用，但 Claude 额度不会显示。
+对于 Claude，是否能显示额度取决于本地 payload 形状、`~/.hermitflow/claude-provider-usage.json` 顶层命令式额度查询结果或受支持 provider 的响应结构。只有当上游 payload 提供官方 Claude 风格的 `rate_limits.five_hour` 与 `rate_limits.seven_day`，或者三方 provider 响应能被映射为兼容窗口时，HermitFlow 才会显示 `5h` / `wk`。如果命令式查询返回的是 `day` 这类自定义窗口，Claude UI 会只显示该自定义标签，而不再显示默认的 `5h` / `wk`。某些第三方 Anthropic 兼容模型只提供 context window 信息，或者完全不提供 rate limit 字段，此时 Claude 活动和审批仍然可用，但 Claude 额度不会显示。
 
 ### Claude 三方 Provider
 
@@ -181,6 +183,11 @@ provider 查询配置文件位于：
 - `ZenMux`: `https://zenmux.ai/api/v1/management/subscription/detail`
 - `MinMax`: `https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
 
+这个配置文件可定义：
+
+- 一个可选的顶层命令式额度查询
+- 一组 provider 匹配规则和 HTTP 额度查询定义
+
 每个 provider 配置项可定义：
 
 - 如何识别该 provider
@@ -189,6 +196,26 @@ provider 查询配置文件位于：
 - 请求头、query、body 如何构造
 - `Authorization: Bearer <token>` 应读取哪个 `authEnvKey`
 - 如何把 provider 响应映射成 Claude `5h` / `wk` 窗口
+
+当 Claude 额度只能通过本地 CLI 包装查询时，可以在配置文件顶层写命令式查询。只要顶层 `usageCommand` 存在，HermitFlow 就会跳过 provider 识别，只执行这个命令。例如：
+
+```json
+{
+  "usageCommand": {
+    "command": "echo '{}' | ~/xxx/hook-cli cc_statusLine | awk '{print $NF}'",
+    "window": "day",
+    "valueKind": "usedPercentage",
+    "displayLabel": "day",
+    "timeoutSeconds": 5
+  },
+  "providers": []
+}
+```
+
+`valueKind` 当前支持：
+
+- `usedPercentage`：命令输出本身就是已用比例/百分比
+- `remainingPercentage`：命令输出是剩余比例/百分比，HermitFlow 会在内部转换成已用比例
 
 `authEnvKey` 现在支持两种写法：
 
