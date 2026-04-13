@@ -22,7 +22,9 @@ enum ClaudeUsageLoader {
 
         let config = try loadProviderConfig()
 
-        if let usageCommand = config.usageCommand {
+        if let usageCommand = config.usageCommand,
+           let command = usageCommand.command?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !command.isEmpty {
             return try loadCommandUsageSnapshot(definition: usageCommand)
         }
 
@@ -131,13 +133,15 @@ enum ClaudeUsageLoader {
             usageKey: "current_interval_usage_count",
             totalKey: "current_interval_total_count",
             resetKey: "end_time",
-            in: selectedEntry
+            in: selectedEntry,
+            usageValueRepresentsRemaining: true
         )
         let sevenDay = minMaxWindow(
             usageKey: "current_weekly_usage_count",
             totalKey: "current_weekly_total_count",
             resetKey: "weekly_end_time",
-            in: selectedEntry
+            in: selectedEntry,
+            usageValueRepresentsRemaining: true
         )
 
         let snapshot = ClaudeUsageSnapshot(
@@ -304,7 +308,8 @@ enum ClaudeUsageLoader {
         usageKey: String,
         totalKey: String,
         resetKey: String,
-        in entry: [String: Any]
+        in entry: [String: Any],
+        usageValueRepresentsRemaining: Bool = false
     ) -> ClaudeUsageWindow? {
         guard let usage = numericValue(entry[usageKey]),
               let total = numericValue(entry[totalKey]),
@@ -312,7 +317,8 @@ enum ClaudeUsageLoader {
             return nil
         }
 
-        let usedPercentage = min(max(usage / total, 0), 1)
+        let normalizedUsage = usageValueRepresentsRemaining ? (total - usage) : usage
+        let usedPercentage = min(max(normalizedUsage / total, 0), 1)
         return ClaudeUsageWindow(
             usedPercentage: usedPercentage,
             resetsAt: parseDate(entry[resetKey])
@@ -949,7 +955,12 @@ enum ClaudeUsageLoader {
     }
 
     private static func runUsageCommand(_ definition: ClaudeProviderUsageCommand) -> String? {
-        let trimmedCommand = definition.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let command = definition.command else {
+            Logger.log("Claude usage command is empty.", category: .source)
+            return nil
+        }
+
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCommand.isEmpty else {
             Logger.log("Claude usage command is empty.", category: .source)
             return nil
@@ -1112,7 +1123,13 @@ struct ClaudeProviderUsageConfig: Codable, Hashable {
     }
 
     static let defaultConfig = ClaudeProviderUsageConfig(
-        usageCommand: nil,
+        usageCommand: ClaudeProviderUsageCommand(
+            command: nil,
+            window: .day,
+            valueKind: .remainingPercentage,
+            timeoutSeconds: 5,
+            displayLabel: "day"
+        ),
         providers: [
             ClaudeProviderDefinition(
                 id: "kimi",
@@ -1364,7 +1381,7 @@ enum ClaudeProviderUsageCommandValueKind: String, Codable, Hashable {
 }
 
 struct ClaudeProviderUsageCommand: Codable, Hashable {
-    var command: String
+    var command: String?
     var window: ClaudeProviderUsageCommandWindow
     var valueKind: ClaudeProviderUsageCommandValueKind
     var timeoutSeconds: TimeInterval?

@@ -68,13 +68,13 @@ struct ClaudeUsageCardView: View {
     private func subtitle(for item: ClaudeLabeledUsageWindow) -> String {
         switch item.id {
         case "five_hour":
-            return "5 hour window"
+            return "5 hour remaining"
         case "seven_day":
-            return "7 day window"
+            return "7 day remaining"
         case "day":
-            return "Daily usage"
+            return "Daily remaining"
         default:
-            return "\(item.label) window"
+            return "\(item.label) remaining"
         }
     }
 
@@ -84,7 +84,7 @@ struct ClaudeUsageCardView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color(red: 0.48, green: 0.84, blue: 0.99))
 
-            Text("\(window.roundedUsedPercentage)%")
+            Text("\(window.roundedLeftPercentage)%")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 

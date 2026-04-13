@@ -22,6 +22,10 @@ struct CodexUsageWindow: Equatable, Codable, Hashable, Identifiable {
     var roundedUsedPercentage: Int {
         Int((min(max(usedPercentage, 0), 1) * 100).rounded())
     }
+
+    var roundedLeftPercentage: Int {
+        Int((min(max(leftPercentage, 0), 1) * 100).rounded())
+    }
 }
 
 struct CodexUsageSnapshot: Equatable, Codable, Hashable {

@@ -84,12 +84,12 @@ struct CodexUsageCardView: View {
 
                         Capsule(style: .continuous)
                             .fill(Color(red: 0.02, green: 0.71, blue: 0.83))
-                            .frame(width: max(proxy.size.width * window.usedPercentage, window.usedPercentage > 0 ? 4 : 0))
+                            .frame(width: max(proxy.size.width * window.leftPercentage, window.leftPercentage > 0 ? 4 : 0))
                     }
                 }
                 .frame(height: 5)
 
-                Text("\(window.roundedUsedPercentage)%")
+                Text("\(window.roundedLeftPercentage)%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white)
             }

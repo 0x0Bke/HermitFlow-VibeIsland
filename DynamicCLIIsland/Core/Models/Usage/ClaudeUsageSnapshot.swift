@@ -29,6 +29,10 @@ struct ClaudeUsageWindow: Equatable, Codable, Hashable {
     var leftPercentage: Double {
         max(0, 1 - usedPercentage)
     }
+
+    var roundedLeftPercentage: Int {
+        Int((min(max(leftPercentage, 0), 1) * 100).rounded())
+    }
 }
 
 struct ClaudeUsageSnapshot: Equatable, Codable, Hashable {

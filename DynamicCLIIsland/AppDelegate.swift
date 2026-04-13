@@ -158,6 +158,8 @@ private struct SettingsPanelView: View {
     @ObservedObject var store: ProgressStore
     let currentScreenTitle: () -> String
     let screenOptions: () -> [ScreenOption]
+    let claudeUsageCommandJSONText: () -> String
+    let onClaudeUsageCommandJSONSubmit: (String) -> Void
     let claudeSettingsJSONText: () -> String
     let onClaudeSettingsJSONSubmit: (String) -> Void
     let approvalDefaultFocus: () -> ApprovalDefaultFocusOption
@@ -165,6 +167,8 @@ private struct SettingsPanelView: View {
     let providerAuthRows: () -> [ProviderAuthEnvKeyRow]
     let providerAuthRefreshToken: () -> Int
     let onProviderAuthEnvKeySubmit: (String, String) -> Void
+    @State private var claudeUsageCommandInput = ""
+    @State private var claudeUsageCommandLastSubmitted = ""
     @State private var claudeSettingsInput = ""
     @State private var claudeSettingsLastSubmitted = ""
 
@@ -244,6 +248,32 @@ private struct SettingsPanelView: View {
                 )
             }
 
+            settingsTile(title: "usage-cmd", minHeight: 176) {
+                ZStack(alignment: .topLeading) {
+                    if claudeUsageCommandInput.isEmpty {
+                        Text("{\n  \"command\": null,\n  \"window\": \"day\",\n  \"valueKind\": \"remainingPercentage\",\n  \"displayLabel\": \"day\",\n  \"timeoutSeconds\": 5\n}")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.22))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    }
+
+                    PlainJSONEditor(text: $claudeUsageCommandInput)
+                        .frame(maxWidth: .infinity, minHeight: 148, alignment: .leading)
+                        .onChange(of: claudeUsageCommandInput) { _, _ in
+                            scheduleClaudeUsageCommandSubmit()
+                        }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.045))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                )
+            }
+
             settingsTile(title: "cc-paths", minHeight: 176) {
                 ZStack(alignment: .topLeading) {
                     if claudeSettingsInput.isEmpty {
@@ -271,10 +301,28 @@ private struct SettingsPanelView: View {
             }
         }
         .onAppear {
+            claudeUsageCommandInput = claudeUsageCommandJSONText()
+            claudeUsageCommandLastSubmitted = claudeUsageCommandInput.trimmingCharacters(in: .whitespacesAndNewlines)
             claudeSettingsInput = claudeSettingsJSONText()
             claudeSettingsLastSubmitted = claudeSettingsInput.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        .onChange(of: providerAuthRefreshToken()) { _, _ in
+            let latestUsageCommand = claudeUsageCommandJSONText()
+            let normalizedLatestUsageCommand = latestUsageCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+            if claudeUsageCommandInput.trimmingCharacters(in: .whitespacesAndNewlines) == claudeUsageCommandLastSubmitted {
+                claudeUsageCommandInput = latestUsageCommand
+                claudeUsageCommandLastSubmitted = normalizedLatestUsageCommand
+            }
+
+            let latestClaudeSettings = claudeSettingsJSONText()
+            let normalizedLatestClaudeSettings = latestClaudeSettings.trimmingCharacters(in: .whitespacesAndNewlines)
+            if claudeSettingsInput.trimmingCharacters(in: .whitespacesAndNewlines) == claudeSettingsLastSubmitted {
+                claudeSettingsInput = latestClaudeSettings
+                claudeSettingsLastSubmitted = normalizedLatestClaudeSettings
+            }
+        }
         .onDisappear {
+            submitClaudeUsageCommand()
             submitClaudeSettings()
         }
         .padding(14)
@@ -377,6 +425,17 @@ private struct SettingsPanelView: View {
         }
     }
 
+    private func submitClaudeUsageCommand() {
+        let normalizedInput = claudeUsageCommandInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedInput != claudeUsageCommandLastSubmitted else {
+            return
+        }
+        claudeUsageCommandLastSubmitted = normalizedInput
+        if normalizedInput != claudeUsageCommandJSONText().trimmingCharacters(in: .whitespacesAndNewlines) {
+            onClaudeUsageCommandJSONSubmit(normalizedInput)
+        }
+    }
+
     private func scheduleClaudeSettingsSubmit() {
         let snapshot = claudeSettingsInput
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -384,6 +443,16 @@ private struct SettingsPanelView: View {
                 return
             }
             submitClaudeSettings()
+        }
+    }
+
+    private func scheduleClaudeUsageCommandSubmit() {
+        let snapshot = claudeUsageCommandInput
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard snapshot == claudeUsageCommandInput else {
+                return
+            }
+            submitClaudeUsageCommand()
         }
     }
 }
@@ -578,6 +647,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             },
             screenOptions: { [weak self] in
                 self?.settingsScreenOptions ?? []
+            },
+            claudeUsageCommandJSONText: { [weak self] in
+                self?.claudeUsageCommandJSONText ?? ""
+            },
+            onClaudeUsageCommandJSONSubmit: { [weak self] value in
+                self?.updateClaudeUsageCommandJSON(from: value)
             },
             claudeSettingsJSONText: { [weak self] in
                 self?.claudeSettingsJSONText ?? ""
@@ -1267,6 +1342,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         loadClaudeSettingsJSONText()
     }
 
+    private var claudeUsageCommandJSONText: String {
+        loadClaudeUsageCommandJSONText()
+    }
+
     private var claudeProviderAuthRows: [ProviderAuthEnvKeyRow] {
         loadClaudeProviderUsageConfigForSettings().providers.map { provider in
             ProviderAuthEnvKeyRow(
@@ -1293,6 +1372,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
 
+    private func updateClaudeUsageCommandJSON(from rawInput: String) {
+        do {
+            try FileManager.default.createDirectory(
+                at: FilePaths.hermitFlowHome,
+                withIntermediateDirectories: true
+            )
+
+            var config = loadClaudeProviderUsageConfigForSettings()
+            let normalizedInput = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let command = try decodeClaudeUsageCommand(from: normalizedInput)
+            config.usageCommand = command
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(config)
+            try data.write(to: FilePaths.claudeProviderUsageConfig, options: .atomic)
+
+            restartProviderConfigMonitor()
+            refreshProviderConfigState()
+        } catch {
+            debugLog("Failed to write Claude usage command JSON: \(error.localizedDescription)")
+        }
+    }
+
     private func loadClaudeSettingsJSONText() -> String {
         guard FileManager.default.fileExists(atPath: FilePaths.claudeSettingsPaths.path) else {
             return "{\n  \"paths\": []\n}"
@@ -1304,6 +1407,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         } catch {
             debugLog("Failed to load Claude settings JSON: \(error.localizedDescription)")
             return "{\n  \"paths\": []\n}"
+        }
+    }
+
+    private func loadClaudeUsageCommandJSONText() -> String {
+        let config = loadClaudeProviderUsageConfigForSettings()
+        let usageCommand = config.usageCommand ?? ClaudeProviderUsageConfig.defaultConfig.usageCommand
+
+        guard let usageCommand else {
+            return "{\n  \"command\": null,\n  \"window\": \"day\",\n  \"valueKind\": \"remainingPercentage\",\n  \"displayLabel\": \"day\",\n  \"timeoutSeconds\": 5\n}"
+        }
+
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(usageCommand)
+            return String(decoding: data, as: UTF8.self)
+        } catch {
+            debugLog("Failed to encode Claude usage command JSON: \(error.localizedDescription)")
+            return "{\n  \"command\": null,\n  \"window\": \"day\",\n  \"valueKind\": \"remainingPercentage\",\n  \"displayLabel\": \"day\",\n  \"timeoutSeconds\": 5\n}"
         }
     }
 
@@ -1321,6 +1443,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             debugLog("Failed to load Claude provider usage config, falling back to defaults: \(error.localizedDescription)")
             return ClaudeProviderUsageConfig.defaultConfig
         }
+    }
+
+    private func decodeClaudeUsageCommand(from rawInput: String) throws -> ClaudeProviderUsageCommand {
+        let normalizedInput = rawInput.isEmpty
+            ? "{\n  \"command\": null,\n  \"window\": \"day\",\n  \"valueKind\": \"remainingPercentage\",\n  \"displayLabel\": \"day\",\n  \"timeoutSeconds\": 5\n}"
+            : rawInput
+
+        let data = Data(normalizedInput.utf8)
+        return try JSONDecoder().decode(ClaudeProviderUsageCommand.self, from: data)
     }
 
     private func updateClaudeProviderUsageAuthEnvKey(providerID: String, value: String) {

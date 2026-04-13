@@ -22,7 +22,7 @@ enum UsageSummaryFormatter {
             parts.append(providerDisplayName)
         }
         for entry in snapshot.displayWindows.prefix(2) {
-            parts.append("\(entry.label) \(entry.window.roundedUsedPercentage)%")
+            parts.append("\(entry.label) \(entry.window.roundedLeftPercentage)%")
         }
         if let updatedText = updatedText(snapshot.cachedAt) {
             parts.append("updated \(updatedText)")
@@ -39,7 +39,7 @@ enum UsageSummaryFormatter {
         var parts = snapshot.windows
             .sorted { $0.windowMinutes < $1.windowMinutes }
             .prefix(2)
-            .map { "\($0.label) \($0.roundedUsedPercentage)%" }
+            .map { "\($0.label) \($0.roundedLeftPercentage)%" }
 
         if let planType = snapshot.planType, !planType.isEmpty {
             parts.append("plan \(planType)")
