@@ -9,6 +9,7 @@ import Foundation
 
 enum ClaudeUsageLoader {
     private static let customSettingsPathsEnvironmentKey = "HERMITFLOW_CLAUDE_SETTINGS_PATHS"
+    private static let claudeShellEnvironmentPrefixes = ["ANTHROPIC_"]
     private static let requestTimeout: TimeInterval = 5
     private static let defaultCommandTimeout: TimeInterval = 5
 
@@ -474,8 +475,12 @@ enum ClaudeUsageLoader {
         let settingsCandidates = try resolvedClaudeSettingsCandidates()
         let statusLine = loadStatusLineDebug()
 
-        for definition in config.providers {
-            if let candidate = settingsCandidates.first(where: { matches(definition.match, settings: $0, statusLine: statusLine) }) {
+        for candidate in settingsCandidates {
+            if let definition = config.providers.first(where: { matches($0.match, settings: candidate, statusLine: statusLine) }) {
+                Logger.log(
+                    "Claude provider resolved to \(definition.id) from \(candidate.url.path) with baseURL=\(candidate.baseURL ?? "nil") modelID=\(statusLine.modelID ?? candidate.modelID ?? "nil").",
+                    category: .source
+                )
                 return ResolvedClaudeProvider(
                     id: definition.id,
                     displayName: definition.displayName,
@@ -488,6 +493,10 @@ enum ClaudeUsageLoader {
             }
         }
 
+        Logger.log(
+            "Claude provider resolution found no match. statusLine.modelID=\(statusLine.modelID ?? "nil") statusLine.displayName=\(statusLine.modelDisplayName ?? "nil").",
+            category: .source
+        )
         return nil
     }
 
@@ -527,8 +536,9 @@ enum ClaudeUsageLoader {
     }
 
     private static func resolvedClaudeSettingsCandidates() throws -> [ClaudeSettingsCandidate] {
+        var candidates = try loadShellExportCandidates()
         let urls = try resolvedClaudeSettingsURLs()
-        return try urls.compactMap { url in
+        candidates.append(contentsOf: try urls.compactMap { url in
             let object = try loadJSONObjectIfPresent(at: url) ?? [:]
             let env = object["env"] as? [String: String] ?? [:]
             let baseURL = env["ANTHROPIC_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -539,7 +549,109 @@ enum ClaudeUsageLoader {
             }
 
             return ClaudeSettingsCandidate(url: url, env: env, baseURL: baseURL, modelID: modelID)
+        })
+        return candidates
+    }
+
+    private static func loadShellExportCandidates() throws -> [ClaudeSettingsCandidate] {
+        try [FilePaths.zshrc, FilePaths.bashrc].compactMap { url in
+            let env = try loadShellExportsIfPresent(at: url)
+            let baseURL = env["ANTHROPIC_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelID = env["ANTHROPIC_MODEL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard baseURL != nil || modelID != nil else {
+                return nil
+            }
+
+            return ClaudeSettingsCandidate(url: url, env: env, baseURL: baseURL, modelID: modelID)
         }
+    }
+
+    private static func loadShellExportsIfPresent(at url: URL) throws -> [String: String] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return [:]
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) else {
+            Logger.log("Claude shell config at \(url.path) is not UTF-8, skipping.", category: .source)
+            return [:]
+        }
+
+        var env: [String: String] = [:]
+        for line in text.components(separatedBy: .newlines) {
+            guard let (key, value) = parseShellExportLine(line) else {
+                continue
+            }
+
+            env[key] = value
+        }
+
+        return env
+    }
+
+    private static func parseShellExportLine(_ line: String) -> (String, String)? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedLine.hasPrefix("export ") else {
+            return nil
+        }
+
+        let content = trimmedLine.dropFirst("export ".count)
+        guard let separatorIndex = content.firstIndex(of: "=") else {
+            return nil
+        }
+
+        let key = String(content[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard claudeShellEnvironmentPrefixes.contains(where: { key.hasPrefix($0) }) else {
+            return nil
+        }
+
+        let rawValue = String(content[content.index(after: separatorIndex)...])
+        let value = parseShellExportValue(rawValue)
+        guard !value.isEmpty else {
+            return nil
+        }
+
+        return (key, value)
+    }
+
+    private static func parseShellExportValue(_ rawValue: String) -> String {
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else {
+            return ""
+        }
+
+        if let quote = trimmedValue.first, (quote == "\"" || quote == "'") {
+            var escaped = false
+            var collected = ""
+
+            for character in trimmedValue.dropFirst() {
+                if escaped {
+                    collected.append(character)
+                    escaped = false
+                    continue
+                }
+
+                if quote == "\"" && character == "\\" {
+                    escaped = true
+                    continue
+                }
+
+                if character == quote {
+                    return collected.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+
+                collected.append(character)
+            }
+
+            return collected.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let commentIndex = trimmedValue.firstIndex(of: "#") {
+            return String(trimmedValue[..<commentIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return trimmedValue
     }
 
     private static func resolvedClaudeSettingsURLs() throws -> [URL] {
@@ -677,6 +789,10 @@ enum ClaudeUsageLoader {
             if rule.baseURLPrefixes.contains(where: { baseURL.hasPrefix($0.lowercased()) }) {
                 return true
             }
+
+            // When the user explicitly sets a base URL, treat it as the authoritative provider hint.
+            // This prevents a stale Claude status-line model name from reclassifying the provider.
+            return false
         }
 
         return modelCandidates.contains { model in

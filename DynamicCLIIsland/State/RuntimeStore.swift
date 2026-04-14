@@ -644,6 +644,10 @@ final class RuntimeStore: ObservableObject {
         usageQueue.async { [weak self] in
             let claudeSnapshot = includeClaude ? claudeUsageSource.fetchUsageSnapshot() : existingState.claude
             let codexSnapshot = includeCodex ? codexUsageSource.fetchUsageSnapshot() : existingState.codex
+            Logger.log(
+                "Usage refresh completed. includeClaude=\(includeClaude) claudeProvider=\(claudeSnapshot?.providerID ?? "nil") claudeDisplay=\(claudeSnapshot?.providerDisplayName ?? "nil") includeCodex=\(includeCodex).",
+                category: .store
+            )
             let providerState = UsageProviderState(
                 claude: claudeSnapshot,
                 codex: codexSnapshot
