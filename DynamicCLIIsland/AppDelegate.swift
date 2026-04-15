@@ -185,11 +185,11 @@ private struct SettingsPanelView: View {
     let onApprovalDefaultFocusSelected: (ApprovalDefaultFocusOption) -> Void
     let usageDisplayType: () -> UsageDisplayType
     let onUsageDisplayTypeSelected: (UsageDisplayType) -> Void
-    let currentNotificationSoundTitle: () -> String
-    let currentNotificationSoundPath: () -> String?
-    let onChooseNotificationSound: () -> Void
-    let onClearNotificationSound: () -> Void
-    let onPreviewNotificationSound: () -> Void
+    let currentNotificationSoundTitle: (NotificationSoundKind) -> String
+    let currentNotificationSoundPath: (NotificationSoundKind) -> String?
+    let onChooseNotificationSound: (NotificationSoundKind) -> Void
+    let onClearNotificationSound: (NotificationSoundKind) -> Void
+    let onPreviewNotificationSound: (NotificationSoundKind) -> Void
     let providerAuthRows: () -> [ProviderAuthEnvKeyRow]
     let providerAuthRefreshToken: () -> Int
     let onProviderAuthEnvKeySubmit: (String, String) -> Void
@@ -286,40 +286,26 @@ private struct SettingsPanelView: View {
 
     private var quickSettingsSection: some View {
         VStack(spacing: 0) {
+            fullWidthQuickSettingCell(title: "Sound", systemImage: "speaker.wave.2") {
+                HStack(alignment: .center, spacing: 0) {
+                    Toggle("", isOn: soundMutedBinding)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(settingsAccent)
+                        .scaleEffect(0.68)
+
+                    Spacer(minLength: 72)
+                    soundSettingControl(for: .approval, label: "Approval", width: 136)
+                    Spacer(minLength: 20)
+                    soundSettingControl(for: .completion, label: "Success", width: 136)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            sectionDivider
+
             quickSettingsRow(
                 leading: {
-                    quickSettingCell(title: "Sound", systemImage: "speaker.wave.2") {
-                        HStack(alignment: .center, spacing: 10) {
-                            Toggle("", isOn: soundMutedBinding)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                                .tint(settingsAccent)
-                                .scaleEffect(0.68)
-
-                            Menu {
-                                Button("选择本地 mp3…") {
-                                    onChooseNotificationSound()
-                                }
-
-                                Button("试听") {
-                                    onPreviewNotificationSound()
-                                }
-
-                                if currentNotificationSoundPath() != nil {
-                                    Divider()
-
-                                    Button("恢复默认提示音") {
-                                        onClearNotificationSound()
-                                    }
-                                }
-                            } label: {
-                                pickerCapsule(title: currentNotificationSoundTitle(), width: 168)
-                            }
-                            .menuStyle(.borderlessButton)
-                        }
-                    }
-                },
-                trailing: {
                     quickSettingCell(title: "Screen", systemImage: "display") {
                         Menu {
                             ForEach(screenOptions()) { option in
@@ -332,13 +318,8 @@ private struct SettingsPanelView: View {
                         }
                         .menuStyle(.borderlessButton)
                     }
-                }
-            )
-
-            sectionDivider
-
-            quickSettingsRow(
-                leading: {
+                },
+                trailing: {
                     quickSettingCell(title: "Logo", systemImage: "seal") {
                         Menu {
                             ForEach(availableLogos, id: \.rawValue) { logo in
@@ -351,8 +332,13 @@ private struct SettingsPanelView: View {
                         }
                         .menuStyle(.borderlessButton)
                     }
-                },
-                trailing: {
+                }
+            )
+
+            sectionDivider
+
+            quickSettingsRow(
+                leading: {
                     quickSettingCell(title: "approval-focus", systemImage: "command.circle") {
                         Menu {
                             ForEach(ApprovalDefaultFocusOption.allCases, id: \.rawValue) { option in
@@ -365,13 +351,8 @@ private struct SettingsPanelView: View {
                         }
                         .menuStyle(.borderlessButton)
                     }
-                }
-            )
-
-            sectionDivider
-
-            quickSettingsRow(
-                leading: {
+                },
+                trailing: {
                     quickSettingCell(title: "usage-type", systemImage: "chart.bar") {
                         Menu {
                             ForEach(UsageDisplayType.allCases, id: \.rawValue) { option in
@@ -384,9 +365,6 @@ private struct SettingsPanelView: View {
                         }
                         .menuStyle(.borderlessButton)
                     }
-                },
-                trailing: {
-                    Color.clear
                 }
             )
         }
@@ -395,6 +373,53 @@ private struct SettingsPanelView: View {
             RoundedRectangle(cornerRadius: sectionCornerRadius, style: .continuous)
                 .stroke(sectionBorder, lineWidth: 1)
         )
+    }
+
+    private func soundSettingControl(for kind: NotificationSoundKind, label: String, width: CGFloat) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: soundIconName(for: kind))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(settingsAccent)
+
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.68))
+
+            soundMenu(for: kind, width: width)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func soundMenu(for kind: NotificationSoundKind, width: CGFloat = 168) -> some View {
+        Menu {
+            Button("选择本地 mp3…") {
+                onChooseNotificationSound(kind)
+            }
+
+            Button("试听") {
+                onPreviewNotificationSound(kind)
+            }
+
+            if currentNotificationSoundPath(kind) != nil {
+                Divider()
+
+                Button("恢复默认提示音") {
+                    onClearNotificationSound(kind)
+                }
+            }
+        } label: {
+            pickerCapsule(title: currentNotificationSoundTitle(kind), width: width)
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private func soundIconName(for kind: NotificationSoundKind) -> String {
+        switch kind {
+        case .approval:
+            return "bell.badge"
+        case .completion:
+            return "checkmark.circle"
+        }
     }
 
     private func quickSettingsRow<Leading: View, Trailing: View>(
@@ -425,6 +450,23 @@ private struct SettingsPanelView: View {
 
             accessory()
                 .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+    }
+
+    private func fullWidthQuickSettingCell<Accessory: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder accessory: () -> Accessory
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            quickSettingLabel(title: title, systemImage: systemImage)
+                .frame(width: 96, alignment: .leading)
+
+            accessory()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -525,22 +567,24 @@ private struct SettingsPanelView: View {
     }
 
     private func pickerCapsule(title: String, width: CGFloat) -> some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.88))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(width: width, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(controlFill)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(controlStroke, lineWidth: 1)
-            )
+        HStack(alignment: .center, spacing: 7) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(width: width, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(
+            Capsule(style: .continuous)
+                .fill(controlFill)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(controlStroke, lineWidth: 1)
+        )
     }
 
     private var sectionDivider: some View {
@@ -869,20 +913,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             onUsageDisplayTypeSelected: { [weak self] option in
                 self?.store.setUsageDisplayType(option)
             },
-            currentNotificationSoundTitle: { [weak self] in
-                self?.currentNotificationSoundTitle ?? "默认提示音"
+            currentNotificationSoundTitle: { [weak self] kind in
+                self?.currentNotificationSoundTitle(for: kind) ?? "默认提示音"
             },
-            currentNotificationSoundPath: { [weak self] in
-                self?.store.customNotificationSoundPath
+            currentNotificationSoundPath: { [weak self] kind in
+                self?.notificationSoundPath(for: kind)
             },
-            onChooseNotificationSound: { [weak self] in
-                self?.chooseCustomNotificationSound()
+            onChooseNotificationSound: { [weak self] kind in
+                self?.chooseCustomNotificationSound(for: kind)
             },
-            onClearNotificationSound: { [weak self] in
-                self?.store.setCustomNotificationSoundPath(nil)
+            onClearNotificationSound: { [weak self] kind in
+                self?.store.setCustomNotificationSoundPath(nil, for: kind)
             },
-            onPreviewNotificationSound: { [weak self] in
-                self?.environment.appStore.runtimeStore.notificationSoundPlayer.playNotificationPing()
+            onPreviewNotificationSound: { [weak self] kind in
+                switch kind {
+                case .approval:
+                    self?.environment.appStore.runtimeStore.notificationSoundPlayer.playApprovalSound()
+                case .completion:
+                    self?.environment.appStore.runtimeStore.notificationSoundPlayer.playCompletionSound()
+                }
             },
             providerAuthRows: { [weak self] in
                 self?.claudeProviderAuthRows ?? []
@@ -900,30 +949,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         settingsPanel?.close()
     }
 
-    private var currentNotificationSoundTitle: String {
-        guard let path = store.customNotificationSoundPath, !path.isEmpty else {
+    private func currentNotificationSoundTitle(for kind: NotificationSoundKind) -> String {
+        guard let path = notificationSoundPath(for: kind), !path.isEmpty else {
             return "默认提示音"
         }
 
-        return URL(fileURLWithPath: path).lastPathComponent
+        return "Custom"
     }
 
-    private func chooseCustomNotificationSound() {
+    private func notificationSoundPath(for kind: NotificationSoundKind) -> String? {
+        switch kind {
+        case .approval:
+            return store.customApprovalNotificationSoundPath
+        case .completion:
+            return store.customCompletionNotificationSoundPath
+        }
+    }
+
+    private func chooseCustomNotificationSound(for kind: NotificationSoundKind) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.resolvesAliases = true
         panel.allowedContentTypes = [.mp3]
-        panel.title = "选择自定义提示音"
-        panel.message = "选择一个本地 mp3 文件作为提示音。"
+        panel.title = kind == .approval ? "选择审批提示音" : "选择完成提示音"
+        panel.message = kind == .approval
+            ? "选择一个本地 mp3 文件作为审批提示音。"
+            : "选择一个本地 mp3 文件作为完成提示音。"
 
         if panel.runModal() == .OK, let url = panel.url {
-            importCustomNotificationSound(from: url)
+            importCustomNotificationSound(from: url, for: kind)
         }
     }
 
-    private func importCustomNotificationSound(from sourceURL: URL) {
+    private func importCustomNotificationSound(from sourceURL: URL, for kind: NotificationSoundKind) {
         do {
             let fileManager = FileManager.default
             try fileManager.createDirectory(
@@ -932,14 +992,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 attributes: nil
             )
 
-            let destinationURL = FilePaths.customNotificationSound
+            let destinationURL = kind.customFileURL
             if fileManager.fileExists(atPath: destinationURL.path) {
                 try fileManager.removeItem(at: destinationURL)
             }
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
 
-            UserDefaults.standard.removeObject(forKey: NotificationSoundPlayer.customSoundBookmarkDefaultsKey)
-            store.setCustomNotificationSoundPath(destinationURL.path)
+            UserDefaults.standard.removeObject(forKey: kind.customSoundBookmarkDefaultsKey)
+            store.setCustomNotificationSoundPath(destinationURL.path, for: kind)
         } catch {
             #if DEBUG
             print("Failed to import notification sound: \(error)")

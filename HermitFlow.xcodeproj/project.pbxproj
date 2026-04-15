@@ -31,6 +31,7 @@
 			A10000000000000000000043 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000044 /* Assets.xcassets */; };
 		A10000000000000000000045 /* NotificationSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000046 /* NotificationSoundPlayer.swift */; };
 		A10000000000000000000047 /* notification-ping.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000048 /* notification-ping.mp3 */; };
+		A10000000000000000000131 /* success.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000132 /* success.mp3 */; };
 		A10000000000000000000080 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000081 /* AppEnvironment.swift */; };
 		A10000000000000000000082 /* AppBootstrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000083 /* AppBootstrapper.swift */; };
 		A10000000000000000000084 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000085 /* Logger.swift */; };
@@ -124,6 +125,7 @@
 			A10000000000000000000044 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			A10000000000000000000046 /* NotificationSoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSoundPlayer.swift; sourceTree = "<group>"; };
 			A10000000000000000000048 /* notification-ping.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "notification-ping.mp3"; sourceTree = "<group>"; };
+			A10000000000000000000132 /* success.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = success.mp3; sourceTree = "<group>"; };
 		A10000000000000000000081 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		A10000000000000000000083 /* AppBootstrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBootstrapper.swift; sourceTree = "<group>"; };
 		A10000000000000000000085 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				isa = PBXGroup;
 				children = (
 					A10000000000000000000048 /* notification-ping.mp3 */,
+					A10000000000000000000132 /* success.mp3 */,
 					A10000000000000000000042 /* hermit.png */,
 					A1000000000000000000002E /* openai.png */,
 					A1000000000000000000002C /* codex.png */,
@@ -629,6 +632,7 @@
 					files = (
 						A10000000000000000000043 /* Assets.xcassets in Resources */,
 						A10000000000000000000047 /* notification-ping.mp3 in Resources */,
+						A10000000000000000000131 /* success.mp3 in Resources */,
 						A10000000000000000000041 /* hermit.png in Resources */,
 					A1000000000000000000002D /* openai.png in Resources */,
 					A1000000000000000000002B /* codex.png in Resources */,

@@ -80,7 +80,8 @@ final class ProgressStore: ObservableObject {
     var accessibilityPromptDismissed: Bool { appStore.accessibilityPromptDismissed }
     var runningGlyphAnimationSuppressed: Bool { appStore.runningGlyphAnimationSuppressed }
     var isSoundMuted: Bool { appStore.isSoundMuted }
-    var customNotificationSoundPath: String? { appStore.customNotificationSoundPath }
+    var customApprovalNotificationSoundPath: String? { appStore.customApprovalNotificationSoundPath }
+    var customCompletionNotificationSoundPath: String? { appStore.customCompletionNotificationSoundPath }
     var usageSnapshots: [ProviderUsageSnapshot] { appStore.usageSnapshots }
     var usageProviderState: UsageProviderState { appStore.usageProviderState }
     var hasUsageContent: Bool { claudeUsageSnapshot?.isEmpty == false || codexUsageSnapshot?.isEmpty == false }
@@ -165,8 +166,8 @@ final class ProgressStore: ObservableObject {
         appStore.toggleSoundMuted()
     }
 
-    func setCustomNotificationSoundPath(_ path: String?) {
-        appStore.setCustomNotificationSoundPath(path)
+    func setCustomNotificationSoundPath(_ path: String?, for kind: NotificationSoundKind) {
+        appStore.setCustomNotificationSoundPath(path, for: kind)
     }
 
     func setApprovalDefaultFocus(_ option: ApprovalDefaultFocusOption) {

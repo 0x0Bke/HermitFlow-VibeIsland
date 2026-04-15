@@ -101,7 +101,8 @@ final class PresentationStore: ObservableObject {
     @Published private(set) var inlineApprovalCommandExpanded = false
     @Published private(set) var runningGlyphAnimationSuppressed = false
     @Published private(set) var isSoundMuted: Bool
-    @Published private(set) var customNotificationSoundPath: String?
+    @Published private(set) var customApprovalNotificationSoundPath: String?
+    @Published private(set) var customCompletionNotificationSoundPath: String?
     @Published private(set) var approvalDefaultFocus: ApprovalDefaultFocusOption
     @Published private(set) var usageDisplayType: UsageDisplayType
 
@@ -117,8 +118,6 @@ final class PresentationStore: ObservableObject {
     private let externalDisplayPanelMaxWidthWithApproval: CGFloat = 640
     private let logoDefaultsKey = "HermitFlow.selectedLogo"
     private let soundMutedDefaultsKey = "HermitFlow.soundMuted"
-    private let customNotificationSoundPathDefaultsKey = NotificationSoundPlayer.customSoundPathDefaultsKey
-    private let customNotificationSoundBookmarkDefaultsKey = NotificationSoundPlayer.customSoundBookmarkDefaultsKey
     private let approvalDefaultFocusDefaultsKey = "HermitFlow.approvalDefaultFocus"
     private let usageDisplayTypeDefaultsKey = "HermitFlow.usageDisplayType"
 
@@ -142,8 +141,12 @@ final class PresentationStore: ObservableObject {
         let storedLogo = UserDefaults.standard.string(forKey: logoDefaultsKey)
         selectedLogo = BrandLogo(rawValue: storedLogo ?? "") ?? .clawd
         isSoundMuted = UserDefaults.standard.bool(forKey: soundMutedDefaultsKey)
-        customNotificationSoundPath = Self.normalizedCustomSoundPath(
-            UserDefaults.standard.string(forKey: customNotificationSoundPathDefaultsKey)
+        Self.migrateLegacyNotificationSoundSettingsIfNeeded()
+        customApprovalNotificationSoundPath = Self.normalizedCustomSoundPath(
+            UserDefaults.standard.string(forKey: NotificationSoundKind.approval.customSoundPathDefaultsKey)
+        )
+        customCompletionNotificationSoundPath = Self.normalizedCustomSoundPath(
+            UserDefaults.standard.string(forKey: NotificationSoundKind.completion.customSoundPathDefaultsKey)
         )
         let storedApprovalDefaultFocus = UserDefaults.standard.string(forKey: approvalDefaultFocusDefaultsKey)
         approvalDefaultFocus = ApprovalDefaultFocusOption(rawValue: storedApprovalDefaultFocus ?? "") ?? .accept
@@ -433,21 +436,60 @@ final class PresentationStore: ObservableObject {
         UserDefaults.standard.set(isSoundMuted, forKey: soundMutedDefaultsKey)
     }
 
-    func setCustomNotificationSoundPath(_ path: String?) {
+    func setCustomNotificationSoundPath(_ path: String?, for kind: NotificationSoundKind) {
         let normalizedPath = Self.normalizedCustomSoundPath(path)
-        guard customNotificationSoundPath != normalizedPath else {
+        switch kind {
+        case .approval:
+            guard customApprovalNotificationSoundPath != normalizedPath else {
+                return
+            }
+            customApprovalNotificationSoundPath = normalizedPath
+        case .completion:
+            guard customCompletionNotificationSoundPath != normalizedPath else {
+                return
+            }
+            customCompletionNotificationSoundPath = normalizedPath
+        }
+
+        let defaults = UserDefaults.standard
+        if let normalizedPath {
+            defaults.set(normalizedPath, forKey: kind.customSoundPathDefaultsKey)
+        } else {
+            defaults.removeObject(forKey: kind.customSoundPathDefaultsKey)
+            defaults.removeObject(forKey: kind.customSoundBookmarkDefaultsKey)
+            try? FileManager.default.removeItem(at: kind.customFileURL)
+        }
+    }
+
+    private static func migrateLegacyNotificationSoundSettingsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let approvalPathKey = NotificationSoundKind.approval.customSoundPathDefaultsKey
+        let approvalBookmarkKey = NotificationSoundKind.approval.customSoundBookmarkDefaultsKey
+        let legacyPathKey = "HermitFlow.customNotificationSoundPath"
+        let legacyBookmarkKey = "HermitFlow.customNotificationSoundBookmark"
+
+        guard defaults.string(forKey: approvalPathKey) == nil,
+              defaults.data(forKey: approvalBookmarkKey) == nil else {
             return
         }
 
-        customNotificationSoundPath = normalizedPath
-
-        if let normalizedPath {
-            UserDefaults.standard.set(normalizedPath, forKey: customNotificationSoundPathDefaultsKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: customNotificationSoundPathDefaultsKey)
-            UserDefaults.standard.removeObject(forKey: customNotificationSoundBookmarkDefaultsKey)
-            try? FileManager.default.removeItem(at: FilePaths.customNotificationSound)
+        if let legacyPath = defaults.string(forKey: legacyPathKey), !legacyPath.isEmpty {
+            defaults.set(legacyPath, forKey: approvalPathKey)
         }
+
+        if let legacyBookmark = defaults.data(forKey: legacyBookmarkKey) {
+            defaults.set(legacyBookmark, forKey: approvalBookmarkKey)
+        }
+
+        let legacyCustomURL = FilePaths.notificationSoundsDirectory
+            .appendingPathComponent("Custom", isDirectory: false)
+        if FileManager.default.fileExists(atPath: legacyCustomURL.path),
+           !FileManager.default.fileExists(atPath: FilePaths.customApprovalNotificationSound.path) {
+            try? FileManager.default.moveItem(at: legacyCustomURL, to: FilePaths.customApprovalNotificationSound)
+        }
+
+        defaults.removeObject(forKey: legacyPathKey)
+        defaults.removeObject(forKey: legacyBookmarkKey)
     }
 
     func setApprovalDefaultFocus(_ option: ApprovalDefaultFocusOption) {

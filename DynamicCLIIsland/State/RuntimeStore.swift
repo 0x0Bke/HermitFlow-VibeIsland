@@ -528,8 +528,14 @@ final class RuntimeStore: ObservableObject {
             && resolvedApprovalRequest?.id != previousApprovalRequestID
         let shouldPlaySuccessSound = previousCodexStatus != .success && resolvedCodexStatus == .success
 
-        if presentationStore?.isSoundMuted != true && (shouldPlayApprovalSound || shouldPlaySuccessSound) {
-            notificationSoundPlayer.playNotificationPing()
+        if presentationStore?.isSoundMuted != true {
+            if shouldPlayApprovalSound {
+                notificationSoundPlayer.playApprovalSound()
+            }
+
+            if shouldPlaySuccessSound {
+                notificationSoundPlayer.playCompletionSound()
+            }
         }
 
         if previousWindowSize != presentationStore?.windowSize {
