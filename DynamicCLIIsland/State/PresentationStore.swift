@@ -69,6 +69,10 @@ final class PresentationStore: ObservableObject {
     private let inlineApprovalIslandFixedWidth: CGFloat = 560
     private let externalDisplayCompactWidthMultiplier: CGFloat = 1.6
     private let externalDisplayPanelWidthMultiplier: CGFloat = 1.2
+    private let externalDisplayIslandMaxWidth: CGFloat = 392
+    private let externalDisplayInlineApprovalMaxWidth: CGFloat = 500
+    private let externalDisplayPanelMaxWidthWithoutApproval: CGFloat = 560
+    private let externalDisplayPanelMaxWidthWithApproval: CGFloat = 640
     private let logoDefaultsKey = "HermitFlow.selectedLogo"
     private let soundMutedDefaultsKey = "HermitFlow.soundMuted"
     private let customNotificationSoundPathDefaultsKey = NotificationSoundPlayer.customSoundPathDefaultsKey
@@ -135,7 +139,12 @@ final class PresentationStore: ObservableObject {
 
     private var islandWidth: CGFloat {
         if isInlineApprovalExpanded {
-            return inlineApprovalIslandFixedWidth
+            let width = inlineApprovalIslandFixedWidth
+            guard usesExternalDisplayLayout else {
+                return width
+            }
+
+            return min(width, externalDisplayInlineApprovalMaxWidth)
         }
 
         let baseWidth = max(
@@ -144,7 +153,12 @@ final class PresentationStore: ObservableObject {
             proportionalCompactWidth(for: activeScreenWidth, ratio: 0.24)
         )
 
-        return scaledWidth(baseWidth, for: .island)
+        let width = scaledWidth(baseWidth, for: .island)
+        guard usesExternalDisplayLayout else {
+            return width
+        }
+
+        return min(width, externalDisplayIslandMaxWidth)
     }
 
     private var islandHeight: CGFloat {
@@ -173,7 +187,15 @@ final class PresentationStore: ObservableObject {
             )
         )
 
-        return scaledWidth(baseWidth, for: .panel)
+        let width = scaledWidth(baseWidth, for: .panel)
+        guard usesExternalDisplayLayout else {
+            return width
+        }
+
+        let maximumWidth = currentApprovalRequest == nil
+            ? externalDisplayPanelMaxWidthWithoutApproval
+            : externalDisplayPanelMaxWidthWithApproval
+        return min(width, maximumWidth)
     }
 
     private var panelHeight: CGFloat {

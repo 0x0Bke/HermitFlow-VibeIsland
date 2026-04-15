@@ -296,6 +296,18 @@ provider 查询配置文件位于：
 ./scripts/package.sh Debug
 ```
 
+如需基于现有 `.app` 生成 `dmg`：
+
+```bash
+./scripts/package-dmg.sh
+```
+
+如需生成 Intel (`x86_64`) `dmg`：
+
+```bash
+./scripts/package-dmg.sh Release intel
+```
+
 ## 工程结构
 
 - `HermitFlow.xcodeproj`：Xcode 工程
@@ -314,6 +326,7 @@ provider 查询配置文件位于：
 - `DynamicCLIIsland/Legacy/`：重构过程中保留的兼容适配层
 - `DynamicCLIIsland/Resources/`：应用使用的图片资源与资源授权文件
 - `scripts/package.sh`：本地打包脚本
+- `scripts/package-dmg.sh`：本地 DMG 打包脚本
 - `dist/`：打包输出目录
 
 ## 已知边界

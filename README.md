@@ -296,6 +296,18 @@ To build a `Debug` package:
 ./scripts/package.sh Debug
 ```
 
+To build a `dmg` from an existing packaged app:
+
+```bash
+./scripts/package-dmg.sh
+```
+
+To build an Intel (`x86_64`) `dmg`:
+
+```bash
+./scripts/package-dmg.sh Release intel
+```
+
 ## Project Structure
 
 - `HermitFlow.xcodeproj`: Xcode project
@@ -314,6 +326,7 @@ To build a `Debug` package:
 - `DynamicCLIIsland/Legacy/`: compatibility adapters kept during the refactor
 - `DynamicCLIIsland/Resources/`: bundled image assets and resource licensing file
 - `scripts/package.sh`: local packaging script
+- `scripts/package-dmg.sh`: local DMG packaging script
 - `dist/`: packaging output directory
 
 ## Known Limits

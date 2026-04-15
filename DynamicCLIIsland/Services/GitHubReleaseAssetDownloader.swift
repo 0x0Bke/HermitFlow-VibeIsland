@@ -61,8 +61,10 @@ struct GitHubReleaseAssetDownloader: @unchecked Sendable {
             throw DownloadError.missingSuggestedFilename
         }
 
-        let destinationDirectory = fileManager.temporaryDirectory.appendingPathComponent(
-            "HermitFlow-Downloads",
+        let downloadsDirectory = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        let destinationDirectory = downloadsDirectory.appendingPathComponent(
+            "HermitFlow",
             isDirectory: true
         )
         try fileManager.createDirectory(
