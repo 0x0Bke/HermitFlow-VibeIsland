@@ -90,6 +90,8 @@ HermitFlow 已接入 Claude Code。应用启动时会执行以下初始化动作
 - HermitFlow 专用的审批回调路径为 `/permission/hermitflow`
 - Claude 审批不依赖 macOS 辅助功能权限
 
+如需查看当前 Claude 状态在代码中的完整流转过程，可参考 [docs/claude-state-flow.zh-CN.md](docs/claude-state-flow.zh-CN.md)。
+
 如果本机没有可执行的 `node`，Claude hook 无法正常工作。
 
 HermitFlow 也支持从自己管理的本地缓存文件读取 Claude 额度：

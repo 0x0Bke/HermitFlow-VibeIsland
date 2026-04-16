@@ -90,6 +90,8 @@ In practice:
 - The HermitFlow-specific approval callback path is `/permission/hermitflow`
 - Claude approvals do not require macOS Accessibility permissions
 
+For a code-level walkthrough of the current Claude state pipeline, see [docs/claude-state-flow.md](docs/claude-state-flow.md).
+
 If `node` is not available on the machine, Claude hook integration will not work.
 
 HermitFlow can also read Claude usage locally from its own managed cache file:
