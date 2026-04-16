@@ -44,6 +44,8 @@ final class RuntimeStore: ObservableObject {
     private let accessibilityPermissionPollInterval: TimeInterval = 1.0
     private let usageRefreshMinimumInterval: TimeInterval = 30.0
     private let accessibilityPromptDismissedDefaultsKey = "HermitFlow.accessibilityPromptDismissed"
+    private let aggregateSuccessFlashDuration: TimeInterval = 1.25
+    private let aggregateFailureFlashDuration: TimeInterval = 2.0
 
     private var timer: Timer?
     private var approvalTimer: Timer?
@@ -56,6 +58,8 @@ final class RuntimeStore: ObservableObject {
     private var lastUsageRefreshAt: Date?
     private var reducer = RuntimeReducer()
     private var reducerState = RuntimeReducer.State()
+    private var aggregateStatusOverride: AggregateStatusOverride?
+    private var aggregateStatusOverrideTask: Task<Void, Never>?
 
     // TODO: Remove these legacy dependencies once reducer migration is complete.
     let sessionStore: SessionStore
@@ -178,12 +182,15 @@ final class RuntimeStore: ObservableObject {
     }
 
     func dispatch(_ event: IslandEvent) {
-        reducer.apply(event, to: &reducerState)
-        resolvePresentationState()
+        dispatch([event])
     }
 
     func dispatch(_ events: [IslandEvent]) {
+        let aggregateOverride = aggregateStatusOverrideCandidate(for: events)
         reducer.apply(events, to: &reducerState)
+        if let aggregateOverride {
+            applyAggregateStatusOverride(aggregateOverride)
+        }
         resolvePresentationState()
     }
 
@@ -483,7 +490,9 @@ final class RuntimeStore: ObservableObject {
             ?? preservedCodexApprovalRequest(from: previousApprovalRequest)
         let shouldForceRunningStatus = resolvedApprovalRequest != nil
             && reducerState.approvalState.collapsedRequestID != resolvedApprovalRequest?.id
-        let resolvedCodexStatus: CodexActivityState = shouldForceRunningStatus ? .running : reducerState.codexStatus
+        let resolvedCodexStatus: CodexActivityState =
+            activeAggregateStatusOverride(now: .now)
+            ?? (shouldForceRunningStatus ? .running : reducerState.codexStatus)
         let resolvedFocusTarget = resolvedApprovalRequest?.focusTarget
             ?? focusRouter.preferredTarget(from: reducerState.sessions, approvalRequest: liveApprovalRequest)
 
@@ -820,6 +829,104 @@ final class RuntimeStore: ObservableObject {
         localApprovalRefreshInFlight = false
     }
 
+    private func aggregateStatusOverrideCandidate(for events: [IslandEvent]) -> AggregateStatusOverride? {
+        guard !events.isEmpty else {
+            return nil
+        }
+
+        let previousSessions = reducerState.sessionState.sessionsByID
+        let explicitCompletedEvents = events.compactMap { event -> SessionEvent? in
+            guard case let .sessionCompleted(payload) = event else {
+                return nil
+            }
+            return payload
+        }
+
+        if explicitCompletedEvents.contains(where: { $0.activityState == .failure }) {
+            return AggregateStatusOverride(
+                state: .failure,
+                expiresAt: Date().addingTimeInterval(aggregateFailureFlashDuration)
+            )
+        }
+
+        if explicitCompletedEvents.contains(where: { $0.activityState == .success }) {
+            return AggregateStatusOverride(
+                state: .success,
+                expiresAt: Date().addingTimeInterval(aggregateSuccessFlashDuration)
+            )
+        }
+
+        let explicitlyCompletedIDs = Set(explicitCompletedEvents.map(\.id))
+        for event in events {
+            guard case let .sessionsReconciled(currentSessionIDs, _) = event else {
+                continue
+            }
+
+            let visibleIDs = Set(currentSessionIDs)
+            let removedRunningSession = previousSessions.contains { sessionID, snapshot in
+                guard !visibleIDs.contains(sessionID) else {
+                    return false
+                }
+
+                guard !explicitlyCompletedIDs.contains(sessionID) else {
+                    return false
+                }
+
+                return snapshot.activityState == .running
+            }
+
+            if removedRunningSession {
+                return AggregateStatusOverride(
+                    state: .success,
+                    expiresAt: Date().addingTimeInterval(aggregateSuccessFlashDuration)
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func applyAggregateStatusOverride(_ override: AggregateStatusOverride) {
+        aggregateStatusOverride = override
+        aggregateStatusOverrideTask?.cancel()
+
+        let expiresAt = override.expiresAt
+        aggregateStatusOverrideTask = Task { @MainActor [weak self] in
+            let remaining = max(expiresAt.timeIntervalSinceNow, 0)
+            guard remaining > 0 else {
+                self?.clearAggregateStatusOverrideIfExpired()
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            self?.clearAggregateStatusOverrideIfExpired()
+        }
+    }
+
+    private func clearAggregateStatusOverrideIfExpired(now: Date = .now) {
+        guard let aggregateStatusOverride, aggregateStatusOverride.expiresAt <= now else {
+            return
+        }
+
+        self.aggregateStatusOverride = nil
+        aggregateStatusOverrideTask = nil
+        resolvePresentationState()
+    }
+
+    private func activeAggregateStatusOverride(now: Date) -> CodexActivityState? {
+        guard let aggregateStatusOverride else {
+            return nil
+        }
+
+        guard aggregateStatusOverride.expiresAt > now else {
+            self.aggregateStatusOverride = nil
+            aggregateStatusOverrideTask = nil
+            return nil
+        }
+
+        return aggregateStatusOverride.state
+    }
+
     private func preservedCodexApprovalRequest(from previousApprovalRequest: ApprovalRequest?) -> ApprovalRequest? {
         guard
             let previousApprovalRequest,
@@ -854,4 +961,9 @@ final class RuntimeStore: ObservableObject {
             resolutionKind: .accessibilityAutomation
         )
     }
+}
+
+private struct AggregateStatusOverride {
+    let state: IslandCodexActivityState
+    let expiresAt: Date
 }
