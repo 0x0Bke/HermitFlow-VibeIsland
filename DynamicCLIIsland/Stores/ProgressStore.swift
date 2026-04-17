@@ -21,17 +21,30 @@ final class ProgressStore: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private let claudeUsageRefreshInterval: TimeInterval = 10
     private let codexUsageRefreshInterval: TimeInterval = 120
+    private let localQuestionRefreshInterval: TimeInterval = 0.4
     private var usageTimer: Timer?
+    private var questionTimer: Timer?
     private var lastClaudeUsageRefreshAt: Date?
     private var lastCodexUsageRefreshAt: Date?
+    private var lastQuestionRefreshAt: Date?
+    private let askUserQuestionModeDefaultsKey = "HermitFlow.askUserQuestionHandlingMode"
+    private let questionStore = QuestionStore()
+    private let claudeQuestionSource = ClaudeQuestionSource()
 
     var onOpenSettingsPanel: (() -> Void)?
 
     @Published private(set) var claudeUsageSnapshot: ClaudeUsageSnapshot?
     @Published private(set) var codexUsageSnapshot: CodexUsageSnapshot?
+    @Published private(set) var questionPrompt: ClaudeQuestionPrompt?
+    @Published private(set) var questionErrorMessage: String?
+    @Published private(set) var activeQuestionSupportsSubmission = true
+    @Published private(set) var askUserQuestionHandlingMode: AskUserQuestionHandlingMode
 
     init(appStore: AppStore = AppStore()) {
         self.appStore = appStore
+        askUserQuestionHandlingMode = AskUserQuestionHandlingMode(
+            rawValue: UserDefaults.standard.string(forKey: askUserQuestionModeDefaultsKey) ?? ""
+        ) ?? .takeOver
         claudeUsageSnapshot = appStore.claudeUsageSnapshot
         codexUsageSnapshot = appStore.codexUsageSnapshot
 
@@ -93,32 +106,59 @@ final class ProgressStore: ObservableObject {
     var isExpanded: Bool { appStore.isExpanded }
     var isHiddenMode: Bool { appStore.isHiddenMode }
     var hasInlineApprovalIsland: Bool { appStore.hasInlineApprovalIsland }
+    var hasInlineQuestionIsland: Bool { appStore.hasInlineQuestionIsland }
     var panelTransition: PresentationStore.PanelTransitionConfiguration { appStore.panelTransition }
     var windowResizeAnimation: PresentationStore.WindowResizeAnimation { appStore.windowResizeAnimation }
     var modeName: String { appStore.modeName }
     var focusTargetLabel: String? { appStore.focusTargetLabel }
     var accessibilityPermissionMessage: String? { appStore.accessibilityPermissionMessage }
-    var panelTitle: String { appStore.panelTitle }
-    var panelSubtitle: String { appStore.panelSubtitle }
-    var hasPanelContent: Bool { appStore.hasPanelContent }
+    var panelTitle: String {
+        if hasQuestionPrompt {
+            return "Claude Needs Input"
+        }
+        return appStore.panelTitle
+    }
+    var panelSubtitle: String {
+        if let prompt = activeQuestionPrompt {
+            return prompt.title.isEmpty ? (prompt.message ?? "Claude is waiting for your answer") : prompt.title
+        }
+        return appStore.panelSubtitle
+    }
+    var hasPanelContent: Bool { appStore.hasPanelContent || hasQuestionPrompt }
     var activeTask: CLIJob? { appStore.activeTask }
     var completedCount: Int { appStore.completedCount }
     var runningCount: Int { appStore.runningCount }
     var sourceLabel: String { appStore.sourceLabel }
+    var questionInputStore: QuestionStore { questionStore }
+    var hasQuestionPrompt: Bool { activeQuestionPrompt != nil }
+    var activeQuestionPrompt: ClaudeQuestionPrompt? {
+        guard let questionPrompt, !questionPrompt.isExpired else {
+            return nil
+        }
+        return questionPrompt
+    }
+    var questionPresentationMode: QuestionPresentationMode { .inlineIsland }
 
     func handleLaunch() {
         appStore.handleLaunch()
         refreshUsageState()
         startUsageMonitoringIfNeeded()
+        refreshLocalQuestionStatus()
+        startQuestionMonitoringIfNeeded()
     }
 
     func handleAppDidBecomeActive() {
         appStore.handleAppDidBecomeActive()
         refreshUsageState()
         startUsageMonitoringIfNeeded()
+        refreshLocalQuestionStatus()
+        startQuestionMonitoringIfNeeded()
     }
 
     func handlePrimaryTap() {
+        if hasInlineQuestionIsland, displayMode == .island, questionPresentationMode == .inlineIsland {
+            return
+        }
         appStore.handlePrimaryTap()
     }
 
@@ -176,6 +216,17 @@ final class ProgressStore: ObservableObject {
 
     func setUsageDisplayType(_ type: UsageDisplayType) {
         appStore.setUsageDisplayType(type)
+    }
+
+    func setAskUserQuestionHandlingMode(_ mode: AskUserQuestionHandlingMode) {
+        guard askUserQuestionHandlingMode != mode else {
+            return
+        }
+
+        askUserQuestionHandlingMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: askUserQuestionModeDefaultsKey)
+        appStore.resyncClaudeHooks()
+        refreshLocalQuestionStatus()
     }
 
     func updateInlineApprovalCommandExpanded(_ expanded: Bool) {
@@ -242,6 +293,33 @@ final class ProgressStore: ObservableObject {
         appStore.updateCameraHousingHeight(height)
     }
 
+    func submitQuestionAnswer() {
+        performQuestionSubmit()
+    }
+
+    func dismissQuestionPrompt() {
+        guard let prompt = activeQuestionPrompt else {
+            questionErrorMessage = nil
+            questionPrompt = nil
+            questionStore.clear()
+            syncQuestionPresentation()
+            return
+        }
+
+        let dismissed = claudeQuestionSource.dismissQuestion(id: prompt.id)
+        if dismissed {
+            questionErrorMessage = nil
+            questionPrompt = nil
+            questionStore.clear()
+            syncQuestionPresentation()
+            appStore.dispatch(.runtimeStatusMessageUpdated("Claude question cancelled"))
+            return
+        }
+
+        questionErrorMessage = "Unable to cancel question"
+        questionStore.setErrorMessage(questionErrorMessage)
+    }
+
     func startLocalCodexMonitoring() {
         appStore.startLocalCodexMonitoring()
     }
@@ -273,6 +351,62 @@ final class ProgressStore: ObservableObject {
         refreshCodexUsageState()
     }
 
+    func refreshLocalQuestionStatus() {
+        let latestPrompt = claudeQuestionSource.fetchLatestQuestionPrompt()
+        let supportsSubmission = latestPrompt.map { claudeQuestionSource.isPromptSubmittable(id: $0.id) } ?? true
+        let previousPrompt = questionPrompt
+        let previousPromptID = previousPrompt?.id
+        let previousSupportsSubmission = activeQuestionSupportsSubmission
+
+        if latestPrompt?.isExpired == true {
+            let didHaveQuestion = questionPrompt != nil || !questionStore.textAnswer.isEmpty
+            if questionPrompt != nil {
+                questionPrompt = nil
+            }
+            questionStore.clear()
+            if activeQuestionSupportsSubmission != true {
+                activeQuestionSupportsSubmission = true
+            }
+            questionErrorMessage = "Question prompt expired"
+            if didHaveQuestion || previousSupportsSubmission != true {
+                syncQuestionPresentation()
+            }
+            return
+        }
+
+        let promptChanged = previousPrompt != latestPrompt
+        let supportsSubmissionChanged = previousSupportsSubmission != supportsSubmission
+
+        if promptChanged {
+            questionPrompt = latestPrompt
+        }
+        if supportsSubmissionChanged {
+            activeQuestionSupportsSubmission = supportsSubmission
+        }
+        if promptChanged || supportsSubmissionChanged {
+            questionStore.update(with: latestPrompt, supportsSubmission: supportsSubmission)
+            syncQuestionPresentation()
+        }
+
+        guard let latestPrompt else {
+            if previousPromptID != nil {
+                questionErrorMessage = nil
+            }
+            activeQuestionSupportsSubmission = true
+            return
+        }
+
+        questionErrorMessage = nil
+        if previousPromptID != latestPrompt.id {
+            switch questionPresentationMode {
+            case .inlineIsland:
+                appStore.showIsland()
+            case .panel:
+                appStore.showPanel()
+            }
+        }
+    }
+
     func startUsageMonitoringIfNeeded() {
         guard usageTimer == nil else {
             return
@@ -287,9 +421,28 @@ final class ProgressStore: ObservableObject {
         usageTimer = timer
     }
 
+    func startQuestionMonitoringIfNeeded() {
+        guard questionTimer == nil else {
+            return
+        }
+
+        let timer = Timer.scheduledTimer(withTimeInterval: localQuestionRefreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshQuestionTimerTick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        questionTimer = timer
+    }
+
     func stopUsageMonitoring() {
         usageTimer?.invalidate()
         usageTimer = nil
+    }
+
+    func stopQuestionMonitoring() {
+        questionTimer?.invalidate()
+        questionTimer = nil
     }
 
     func chooseProgressFile() {
@@ -310,6 +463,13 @@ final class ProgressStore: ObservableObject {
         }
     }
 
+    private func refreshQuestionTimerTick(now: Date = .now) {
+        if shouldRefreshQuestion(now: now) {
+            refreshLocalQuestionStatus()
+            lastQuestionRefreshAt = now
+        }
+    }
+
     private func shouldRefreshClaudeUsage(now: Date) -> Bool {
         guard let lastClaudeUsageRefreshAt else {
             return true
@@ -324,5 +484,59 @@ final class ProgressStore: ObservableObject {
         }
 
         return now.timeIntervalSince(lastCodexUsageRefreshAt) >= codexUsageRefreshInterval
+    }
+
+    private func shouldRefreshQuestion(now: Date) -> Bool {
+        guard let lastQuestionRefreshAt else {
+            return true
+        }
+
+        return now.timeIntervalSince(lastQuestionRefreshAt) >= localQuestionRefreshInterval
+    }
+
+    private func performQuestionSubmit() {
+        guard let prompt = activeQuestionPrompt else {
+            questionErrorMessage = "Question prompt expired"
+            questionStore.setErrorMessage(questionErrorMessage)
+            return
+        }
+
+        guard let response = questionStore.makeResponse() else {
+            questionErrorMessage = questionStore.errorMessage
+            return
+        }
+
+        questionStore.setSubmitting(true)
+        let resolved = claudeQuestionSource.resolveQuestion(id: prompt.id, response: response)
+        questionStore.setSubmitting(false)
+
+        guard resolved else {
+            let latestPrompt = claudeQuestionSource.fetchLatestQuestionPrompt()
+            if latestPrompt == nil || latestPrompt?.id != prompt.id {
+                questionPrompt = nil
+                questionStore.clear()
+                questionErrorMessage = "Question prompt expired"
+                syncQuestionPresentation()
+                return
+            }
+
+            questionErrorMessage = "Unable to send answer to Claude"
+            questionStore.setErrorMessage(questionErrorMessage)
+            return
+        }
+
+        questionErrorMessage = nil
+        questionPrompt = nil
+        questionStore.clear()
+        syncQuestionPresentation()
+        appStore.dispatch(.runtimeStatusMessageUpdated("Claude Code received your answer"))
+    }
+
+    private func syncQuestionPresentation() {
+        let previousWindowSize = appStore.windowSize
+        appStore.syncQuestionPrompt(activeQuestionPrompt)
+        if appStore.displayMode != .panel, previousWindowSize != appStore.windowSize {
+            appStore.onWindowSizeChange?(appStore.windowSize)
+        }
     }
 }

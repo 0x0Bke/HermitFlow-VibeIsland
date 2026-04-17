@@ -92,6 +92,7 @@ final class AppStore: ObservableObject {
     var isExpanded: Bool { presentationStore.isExpanded }
     var isHiddenMode: Bool { presentationStore.isHiddenMode }
     var hasInlineApprovalIsland: Bool { presentationStore.hasInlineApprovalIsland }
+    var hasInlineQuestionIsland: Bool { presentationStore.hasInlineQuestionIsland }
     var panelTransition: PresentationStore.PanelTransitionConfiguration { presentationStore.panelTransition }
     var windowResizeAnimation: PresentationStore.WindowResizeAnimation { presentationStore.windowResizeAnimation }
     var modeName: String { presentationStore.displayMode.rawValue }
@@ -266,6 +267,10 @@ final class AppStore: ObservableObject {
 
     func dismissAccessibilityPrompt() {
         runtimeStore.dismissAccessibilityPrompt()
+    }
+
+    func syncQuestionPrompt(_ prompt: ClaudeQuestionPrompt?) {
+        presentationStore.syncQuestionPrompt(prompt)
     }
 
     func updateCameraHousingWidth(_ width: CGFloat) {

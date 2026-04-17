@@ -63,6 +63,29 @@ enum UsageDisplayType: String, CaseIterable {
     }
 }
 
+enum AskUserQuestionHandlingMode: String, CaseIterable {
+    case takeOver
+    case mirror
+
+    var menuTitle: String {
+        switch self {
+        case .takeOver:
+            return "HermitFlow 回答"
+        case .mirror:
+            return "Claude 原生回答"
+        }
+    }
+
+    var promptHint: String? {
+        switch self {
+        case .takeOver:
+            return "Answer here to send the response back to Claude Code."
+        case .mirror:
+            return "Answer in Claude CLI or the Claude extension. HermitFlow is mirroring this prompt only."
+        }
+    }
+}
+
 @MainActor
 final class PresentationStore: ObservableObject {
     typealias BrandLogo = IslandBrandLogo
@@ -110,10 +133,14 @@ final class PresentationStore: ObservableObject {
     private let inlineApprovalMinimumHeight: CGFloat = 300
     private let inlineApprovalExpandedHeight: CGFloat = 460
     private let inlineApprovalIslandFixedWidth: CGFloat = 560
+    private let inlineQuestionCompactHeight: CGFloat = 350
+    private let inlineQuestionExpandedHeight: CGFloat = 430
+    private let inlineQuestionIslandFixedWidth: CGFloat = 560
     private let externalDisplayCompactWidthMultiplier: CGFloat = 1.6
     private let externalDisplayPanelWidthMultiplier: CGFloat = 1.2
     private let externalDisplayIslandMaxWidth: CGFloat = 392
     private let externalDisplayInlineApprovalMaxWidth: CGFloat = 500
+    private let externalDisplayInlineQuestionMaxWidth: CGFloat = 500
     private let externalDisplayPanelMaxWidthWithoutApproval: CGFloat = 560
     private let externalDisplayPanelMaxWidthWithApproval: CGFloat = 640
     private let logoDefaultsKey = "HermitFlow.selectedLogo"
@@ -130,6 +157,7 @@ final class PresentationStore: ObservableObject {
 
     // TODO: Remove these temporary runtime mirrors once the views read from AppStore directly.
     private var currentApprovalRequest: ApprovalRequest?
+    private var currentQuestionPrompt: ClaudeQuestionPrompt?
     private var currentSessions: [AgentSessionSnapshot] = []
     private var currentUsageCardCount = 0
 
@@ -178,21 +206,50 @@ final class PresentationStore: ObservableObject {
     }
 
     var hasInlineApprovalIsland: Bool {
-        displayMode == .island && isInlineApprovalExpanded
+        displayMode == .island && prioritizedInlineContent == .approval
+    }
+
+    var hasInlineQuestionIsland: Bool {
+        displayMode == .island && prioritizedInlineContent == .question
     }
 
     private var isInlineApprovalExpanded: Bool {
         currentApprovalRequest != nil && collapsedInlineApprovalID != currentApprovalRequest?.id
     }
 
+    private var prioritizedInlineContent: PrioritizedInlineContent? {
+        let inlineApprovalRequest = isInlineApprovalExpanded ? currentApprovalRequest : nil
+
+        switch (inlineApprovalRequest, currentQuestionPrompt) {
+        case let (approval?, question?):
+            return approval.createdAt >= question.createdAt ? .approval : .question
+        case (.some, nil):
+            return .approval
+        case (nil, .some):
+            return .question
+        case (nil, nil):
+            return nil
+        }
+    }
+
     private var islandWidth: CGFloat {
-        if isInlineApprovalExpanded {
+        switch prioritizedInlineContent {
+        case .approval:
             let width = inlineApprovalIslandFixedWidth
             guard usesExternalDisplayLayout else {
                 return width
             }
 
             return min(width, externalDisplayInlineApprovalMaxWidth)
+        case .question:
+            let width = inlineQuestionIslandFixedWidth
+            guard usesExternalDisplayLayout else {
+                return width
+            }
+
+            return min(width, externalDisplayInlineQuestionMaxWidth)
+        case .none:
+            break
         }
 
         let baseWidth = max(
@@ -210,9 +267,17 @@ final class PresentationStore: ObservableObject {
     }
 
     private var islandHeight: CGFloat {
-        if isInlineApprovalExpanded {
+        switch prioritizedInlineContent {
+        case .approval:
             let minimumHeight = inlineApprovalCommandExpanded ? inlineApprovalExpandedHeight : inlineApprovalMinimumHeight
             return max(compactHeight, minimumHeight)
+        case .question:
+            let minimumHeight = currentQuestionPrompt?.allowsFreeText == true
+                ? inlineQuestionExpandedHeight
+                : inlineQuestionCompactHeight
+            return max(compactHeight, minimumHeight)
+        case .none:
+            break
         }
 
         return compactHeight
@@ -523,6 +588,10 @@ final class PresentationStore: ObservableObject {
         currentUsageCardCount = usageCardCount
     }
 
+    func syncQuestionPrompt(_ prompt: ClaudeQuestionPrompt?) {
+        currentQuestionPrompt = prompt
+    }
+
     func resetCollapsedInlineApproval() {
         collapsedInlineApprovalID = nil
     }
@@ -630,5 +699,12 @@ final class PresentationStore: ObservableObject {
         windowResizeAnimation = animation
         onWindowSizeChange?(windowSize)
         windowResizeAnimation = .none
+    }
+}
+
+private extension PresentationStore {
+    enum PrioritizedInlineContent {
+        case approval
+        case question
     }
 }

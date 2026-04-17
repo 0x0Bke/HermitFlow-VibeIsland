@@ -183,6 +183,8 @@ private struct SettingsPanelView: View {
     let onClaudeSettingsJSONSubmit: (String) -> Void
     let approvalDefaultFocus: () -> ApprovalDefaultFocusOption
     let onApprovalDefaultFocusSelected: (ApprovalDefaultFocusOption) -> Void
+    let askUserQuestionHandlingMode: () -> AskUserQuestionHandlingMode
+    let onAskUserQuestionHandlingModeSelected: (AskUserQuestionHandlingMode) -> Void
     let usageDisplayType: () -> UsageDisplayType
     let onUsageDisplayTypeSelected: (UsageDisplayType) -> Void
     let currentNotificationSoundTitle: (NotificationSoundKind) -> String
@@ -352,6 +354,26 @@ private struct SettingsPanelView: View {
                         .menuStyle(.borderlessButton)
                     }
                 },
+                trailing: {
+                    quickSettingCell(title: "ask-user", systemImage: "text.bubble") {
+                        Menu {
+                            ForEach(AskUserQuestionHandlingMode.allCases, id: \.rawValue) { option in
+                                Button(option.menuTitle) {
+                                    onAskUserQuestionHandlingModeSelected(option)
+                                }
+                            }
+                        } label: {
+                            pickerCapsule(title: askUserQuestionHandlingMode().menuTitle, width: 148)
+                        }
+                        .menuStyle(.borderlessButton)
+                    }
+                }
+            )
+
+            sectionDivider
+
+            quickSettingsRow(
+                leading: { Color.clear.frame(maxWidth: .infinity, alignment: .leading) },
                 trailing: {
                     quickSettingCell(title: "usage-type", systemImage: "chart.bar") {
                         Menu {
@@ -906,6 +928,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             },
             onApprovalDefaultFocusSelected: { [weak self] option in
                 self?.store.setApprovalDefaultFocus(option)
+            },
+            askUserQuestionHandlingMode: { [weak self] in
+                self?.store.askUserQuestionHandlingMode ?? .takeOver
+            },
+            onAskUserQuestionHandlingModeSelected: { [weak self] mode in
+                self?.store.setAskUserQuestionHandlingMode(mode)
             },
             usageDisplayType: { [weak self] in
                 self?.store.usageDisplayType ?? .remaining

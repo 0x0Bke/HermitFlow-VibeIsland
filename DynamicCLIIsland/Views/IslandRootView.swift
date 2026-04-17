@@ -46,6 +46,8 @@ struct IslandRootView: View {
         if shouldHoldPanelBody {
             expandedBody
                 .allowsHitTesting(store.displayMode == .panel)
+        } else if store.hasInlineQuestionIsland, let prompt = store.activeQuestionPrompt {
+            inlineQuestionBody(prompt)
         } else if store.hasInlineApprovalIsland, let approvalRequest = store.approvalRequest {
             inlineApprovalBody(approvalRequest)
         } else if store.displayMode == .panel {
@@ -106,7 +108,7 @@ struct IslandRootView: View {
     }
 
     private var shouldBlockCompactGestureOverlay: Bool {
-        store.displayMode == .panel || store.hasInlineApprovalIsland || activePanelTransition != nil
+        store.displayMode == .panel || store.hasInlineApprovalIsland || store.hasInlineQuestionIsland || activePanelTransition != nil
     }
 
     private var railWidth: CGFloat {
@@ -124,6 +126,15 @@ struct IslandRootView: View {
             timestampText: relativeTimestamp(for: request.createdAt),
             diagnosticMessage: store.approvalDiagnosticMessage,
             defaultFocus: store.approvalDefaultFocus
+        )
+    }
+
+    private func inlineQuestionBody(_ prompt: ClaudeQuestionPrompt) -> some View {
+        QuestionInlineView(
+            store: store,
+            prompt: prompt,
+            header: AnyView(islandHeader),
+            timestampText: relativeTimestamp(for: prompt.createdAt)
         )
     }
 
@@ -171,8 +182,24 @@ struct IslandRootView: View {
                     errorCard(message: errorMessage)
                 }
 
+                if let questionErrorMessage = store.questionErrorMessage, store.activeQuestionPrompt == nil {
+                    errorCard(message: questionErrorMessage)
+                }
+
+                if store.questionPresentationMode == .panel,
+                   let prompt = store.activeQuestionPrompt,
+                   shouldPrioritizeQuestionPrompt(prompt) {
+                    questionCard(prompt)
+                }
+
                 if let approvalRequest = store.approvalRequest {
                     approvalCard(approvalRequest)
+                }
+
+                if store.questionPresentationMode == .panel,
+                   let prompt = store.activeQuestionPrompt,
+                   !shouldPrioritizeQuestionPrompt(prompt) {
+                    questionCard(prompt)
                 }
 
                 if store.sessions.isEmpty {
@@ -505,6 +532,16 @@ private extension IslandRootView {
             primaryTitle: approvalPrimaryTitle(for: request),
             timestampText: relativeTimestamp(for: request.createdAt),
             diagnosticMessage: store.approvalDiagnosticMessage
+        )
+    }
+
+    func questionCard(_ prompt: ClaudeQuestionPrompt) -> some View {
+        QuestionPanelView(
+            prompt: prompt,
+            questionStore: store.questionInputStore,
+            timestampText: relativeTimestamp(for: prompt.createdAt),
+            onSubmit: store.submitQuestionAnswer,
+            onDismiss: store.dismissQuestionPrompt
         )
     }
 
@@ -887,6 +924,14 @@ private extension IslandRootView {
 
         let hours = minutes / 60
         return "\(hours)h ago"
+    }
+
+    func shouldPrioritizeQuestionPrompt(_ prompt: ClaudeQuestionPrompt) -> Bool {
+        guard let approvalRequest = store.approvalRequest else {
+            return true
+        }
+
+        return prompt.createdAt >= approvalRequest.createdAt
     }
 }
 

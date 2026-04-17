@@ -72,7 +72,7 @@ enum SessionFreshness: String, Hashable {
     case stale
 }
 
-enum SessionOrigin: String, Hashable {
+enum SessionOrigin: String, Hashable, Codable {
     case claude
     case codex
     case generic
