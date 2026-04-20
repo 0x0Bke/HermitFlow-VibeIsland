@@ -246,7 +246,7 @@ final class FocusLauncher {
     }
 
     private func routeTerminalWindowIfPossible(for target: FocusTarget) -> Bool {
-        guard target.clientOrigin == .claudeCLI else {
+        guard target.clientOrigin == .claudeCLI || target.clientOrigin == .codexCLI else {
             return false
         }
 
@@ -255,6 +255,26 @@ final class FocusLauncher {
             return runAppleScript(arguments: iTermRoutingScriptArguments(for: target)) == "matched"
         case .warp:
             return runAppleScript(arguments: warpRoutingScriptArguments(for: target)) == "matched"
+        case .terminal:
+            return runAppleScript(arguments: terminalRoutingScriptArguments(for: target)) == "matched"
+        case .wezTerm:
+            if routeWezTermPaneIfPossible(for: target) {
+                return true
+            }
+            return runAppleScript(arguments: accessibilityWindowRoutingScriptArguments(
+                processName: "WezTerm",
+                workspaceHints: terminalWorkspaceHints(for: target)
+            )) == "matched"
+        case .ghostty:
+            return runAppleScript(arguments: accessibilityWindowRoutingScriptArguments(
+                processName: "Ghostty",
+                workspaceHints: terminalWorkspaceHints(for: target)
+            )) == "matched"
+        case .alacritty:
+            return runAppleScript(arguments: accessibilityWindowRoutingScriptArguments(
+                processName: "Alacritty",
+                workspaceHints: terminalWorkspaceHints(for: target)
+            )) == "matched"
         default:
             return false
         }
@@ -563,6 +583,144 @@ final class FocusLauncher {
             "-e", "end tell",
             "-e", "return \"not-found\""
         ]
+    }
+
+    private func terminalRoutingScriptArguments(for target: FocusTarget) -> [String] {
+        let workspaceHints = appleScriptList(terminalWorkspaceHints(for: target))
+
+        return [
+            "-e", "set workspaceHints to \(workspaceHints)",
+            "-e", "if (count of workspaceHints) is 0 then return \"not-found\"",
+            "-e", "tell application \"Terminal\" to activate",
+            "-e", "tell application \"Terminal\"",
+            "-e", "repeat with currentWindow in windows",
+            "-e", "repeat with currentTab in tabs of currentWindow",
+            "-e", "set matched to false",
+            "-e", "repeat with workspaceHint in workspaceHints",
+            "-e", "if matched is false then",
+            "-e", "try",
+            "-e", "set matched to ((tty of currentTab as text) contains (workspaceHint as text))",
+            "-e", "end try",
+            "-e", "end if",
+            "-e", "if matched is false then",
+            "-e", "try",
+            "-e", "set matched to ((custom title of currentTab as text) contains (workspaceHint as text))",
+            "-e", "end try",
+            "-e", "end if",
+            "-e", "if matched is false then",
+            "-e", "try",
+            "-e", "set matched to ((name of currentWindow as text) contains (workspaceHint as text))",
+            "-e", "end try",
+            "-e", "end if",
+            "-e", "end repeat",
+            "-e", "if matched then",
+            "-e", "set selected tab of currentWindow to currentTab",
+            "-e", "set index of currentWindow to 1",
+            "-e", "return \"matched\"",
+            "-e", "end if",
+            "-e", "end repeat",
+            "-e", "end repeat",
+            "-e", "end tell",
+            "-e", "return \"not-found\""
+        ]
+    }
+
+    private func accessibilityWindowRoutingScriptArguments(processName: String, workspaceHints: [String]) -> [String] {
+        let escapedProcessName = processName.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let workspaceHintList = appleScriptList(workspaceHints)
+
+        return [
+            "-e", "set targetProcess to \"\(escapedProcessName)\"",
+            "-e", "set workspaceHints to \(workspaceHintList)",
+            "-e", "if (count of workspaceHints) is 0 then return \"not-found\"",
+            "-e", "tell application \"System Events\"",
+            "-e", "if not (exists process targetProcess) then return \"not-found\"",
+            "-e", "tell process targetProcess",
+            "-e", "set frontmost to true",
+            "-e", "repeat with windowRef in windows",
+            "-e", "try",
+            "-e", "set windowName to name of windowRef as text",
+            "-e", "repeat with workspaceHint in workspaceHints",
+            "-e", "if windowName contains (workspaceHint as text) then",
+            "-e", "perform action \"AXRaise\" of windowRef",
+            "-e", "return \"matched\"",
+            "-e", "end if",
+            "-e", "end repeat",
+            "-e", "end try",
+            "-e", "end repeat",
+            "-e", "end tell",
+            "-e", "end tell",
+            "-e", "return \"not-found\""
+        ]
+    }
+
+    private func routeWezTermPaneIfPossible(for target: FocusTarget) -> Bool {
+        guard let paneID = target.terminalSessionHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !paneID.isEmpty else {
+            return false
+        }
+
+        for executableURL in wezTermExecutableCandidates() {
+            let process = Process()
+            process.executableURL = executableURL
+            process.arguments = wezTermActivationArguments(forPaneID: paneID, executableURL: executableURL)
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                continue
+            }
+
+            if process.terminationStatus == 0 {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func wezTermExecutableCandidates() -> [URL] {
+        [
+            URL(fileURLWithPath: "/usr/bin/env"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/wezterm"),
+            URL(fileURLWithPath: "/usr/local/bin/wezterm"),
+            URL(fileURLWithPath: "/Applications/WezTerm.app/Contents/MacOS/wezterm")
+        ]
+    }
+
+    private func wezTermActivationArguments(forPaneID paneID: String, executableURL: URL) -> [String] {
+        let arguments = ["cli", "activate-pane", "--pane-id", paneID]
+        if executableURL.path == "/usr/bin/env" {
+            return ["wezterm"] + arguments
+        }
+        return arguments
+    }
+
+    private func terminalWorkspaceHints(for target: FocusTarget) -> [String] {
+        var hints: [String] = []
+        var seen = Set<String>()
+
+        for rawHint in [target.workspaceHint, target.cwd] {
+            guard let trimmed = rawHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !trimmed.isEmpty else {
+                continue
+            }
+
+            for candidate in [trimmed, URL(fileURLWithPath: trimmed).lastPathComponent] {
+                guard !candidate.isEmpty, !seen.contains(candidate) else {
+                    continue
+                }
+
+                seen.insert(candidate)
+                hints.append(candidate)
+            }
+        }
+
+        return hints
     }
 
     private func appleScriptOptionalString(_ value: String?) -> String {

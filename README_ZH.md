@@ -160,7 +160,7 @@ HermitFlow 也支持从自己管理的本地缓存文件读取 Claude 额度：
 - 面板中的 `Diagnostic` 卡片会展示 Claude hook 同步失败原因
 - 可在面板或状态栏菜单中点击 `Resync Claude Hooks` 重新同步 Claude hooks
 - 可通过会话卡片或审批卡片上的回焦入口，直接拉起对应的 `Claude Code` / `Codex` 客户端
-- 对于 `Claude Code` 终端会话，在存在本地 session hint 时，HermitFlow 还会尝试精确跳转到对应的 `iTerm` 标签/会话或 `Warp` 窗口
+- 对于终端会话，HermitFlow 会尝试回焦到对应的 `iTerm`、`Warp`、`Terminal`、`WezTerm`、`Ghostty` 或 `Alacritty` 窗口；其中 `iTerm` / `WezTerm` 会优先使用本地 session hint，其他终端会按工作目录窗口标题做 best-effort 匹配
 - 通过系统状态栏图标可显示/隐藏窗口，并切换左侧 Logo
 
 ### 问答处理

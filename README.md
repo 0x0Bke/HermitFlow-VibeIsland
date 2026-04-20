@@ -160,7 +160,7 @@ If Claude hook initialization fails, the app still runs, but Claude Code status 
 - The `Diagnostic` card shows Claude hook sync failures
 - Use `Resync Claude Hooks` from either the panel or the status bar menu to retry hook synchronization
 - Use the focus button on a session or approval card to bring the related `Claude Code` / `Codex` client forward
-- For `Claude Code` terminal sessions, HermitFlow can also try to route to the matching `iTerm` tab/session or `Warp` window when local session hints are available
+- For terminal sessions, HermitFlow can try to route back to the matching `iTerm`, `Warp`, `Terminal`, `WezTerm`, `Ghostty`, or `Alacritty` window; `iTerm` / `WezTerm` prefer local session hints, while other terminals use best-effort workspace-title matching
 - Use the status bar icon to show/hide the window and switch the left-side logo
 
 ### Question Handling
