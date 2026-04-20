@@ -290,6 +290,8 @@ provider 查询配置文件位于：
 
 默认路径 `~/.claude/settings.json` 始终会保留在同步列表中。
 
+这些 settings 路径也会用于推导本地 Claude 会话数据目录。比如配置 `~/custom-claude/settings.json` 后，HermitFlow 会额外读取 `~/custom-claude/sessions`、`~/custom-claude/projects` 和 `~/custom-claude/history.jsonl`。如果额外路径配置无法解析，会话读取会回退到默认 `~/.claude`。
+
 另外，以下特殊情况也会被安全处理：
 
 - 自定义 `settings.json` 不存在：会自动创建

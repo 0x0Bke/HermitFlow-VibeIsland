@@ -290,6 +290,8 @@ Supported sync targets:
 
 The default path `~/.claude/settings.json` always remains part of the sync list.
 
+These settings paths are also used to infer local Claude data roots for session discovery. For example, after configuring `~/custom-claude/settings.json`, HermitFlow also reads `~/custom-claude/sessions`, `~/custom-claude/projects`, and `~/custom-claude/history.jsonl`. If the additional path configuration cannot be parsed, session discovery falls back to the default `~/.claude` root.
+
 These edge cases are handled safely:
 
 - custom `settings.json` does not exist: it will be created

@@ -1677,7 +1677,10 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private let failureDisplayHold: TimeInterval = 2.0
     private let trailingRunningIgnoreWindow: TimeInterval = 2.0
     private let hookRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-hooks")
-    private let defaultSettingsURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")
+    private let defaultClaudeRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude", isDirectory: true)
+    private var defaultSettingsURL: URL {
+        defaultClaudeRootURL.appendingPathComponent("settings.json", isDirectory: false)
+    }
     private let customSettingsPathsURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-settings-paths.json")
     private let customSettingsPathsEnvironmentKey = "HERMITFLOW_CLAUDE_SETTINGS_PATHS"
     private let askUserQuestionModeDefaultsKey = "HermitFlow.askUserQuestionHandlingMode"
@@ -1690,9 +1693,6 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private let claudeStatusLineDebugURL = URL(fileURLWithPath: "/tmp/hermitflow-claude-statusline-debug.json")
     private let questionStateRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-questions")
     private let latestQuestionStateURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".hermitflow/claude-questions/latest-question.json")
-    private let claudeHistoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/history.jsonl")
-    private let claudeSessionsRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/sessions")
-    private let claudeProjectsRootURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
     private let claudeDebugLogURL = URL(fileURLWithPath: "/tmp/hermitflow-claude-debug.log")
     private let recentHistoryScanBytes = 512 * 1024
     private let recentClaudeProjectFileLimit = 20
@@ -2674,15 +2674,17 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             return nil
         }
 
-        for line in readRecentLines(from: claudeHistoryURL, maxBytes: recentHistoryScanBytes).reversed() {
-            guard let data = String(line).data(using: .utf8),
-                  let entry = try? JSONDecoder().decode(ClaudeHistoryEntry.self, from: data),
-                  entry.sessionID == sessionID,
-                  let summary = summarizeConversationText(entry.display) else {
-                continue
-            }
+        for dataRoot in resolvedClaudeDataRoots() {
+            for line in readRecentLines(from: dataRoot.historyURL, maxBytes: recentHistoryScanBytes).reversed() {
+                guard let data = String(line).data(using: .utf8),
+                      let entry = try? JSONDecoder().decode(ClaudeHistoryEntry.self, from: data),
+                      entry.sessionID == sessionID,
+                      let summary = summarizeConversationText(entry.display) else {
+                    continue
+                }
 
-            return summary
+                return summary
+            }
         }
 
         return nil
@@ -2972,22 +2974,29 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     }
 
     private func locateClaudeProjectSessionFileBySessionID(_ sessionID: String) -> URL? {
-        guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
-            at: claudeProjectsRootURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
+        var latestMatch: (url: URL, modifiedAt: Date)?
 
-        for directoryURL in directoryURLs {
-            let candidate = directoryURL.appendingPathComponent("\(sessionID).jsonl")
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
+        for dataRoot in resolvedClaudeDataRoots() {
+            guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
+                at: dataRoot.projectsRootURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for directoryURL in directoryURLs {
+                let candidate = directoryURL.appendingPathComponent("\(sessionID).jsonl")
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    let modifiedAt = (try? candidate.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    if latestMatch == nil || modifiedAt > latestMatch!.modifiedAt {
+                        latestMatch = (candidate, modifiedAt)
+                    }
+                }
             }
         }
 
-        return nil
+        return latestMatch?.url
     }
 
     private func locateLatestClaudeProjectSessionFile(forCWD cwd: String) -> URL? {
@@ -2996,42 +3005,11 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             return nil
         }
 
-        let directoryURL = claudeProjectsRootURL.appendingPathComponent(
-            sanitizedClaudeProjectsDirectoryName(for: normalizedCWD)
-        )
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
+        var latestFile: (url: URL, modifiedAt: Date)?
+        let projectDirectoryName = sanitizedClaudeProjectsDirectoryName(for: normalizedCWD)
 
-        return fileURLs
-            .filter { $0.pathExtension == "jsonl" }
-            .max { lhs, rhs in
-                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return lhsDate < rhsDate
-            }
-    }
-
-    private func locateLatestClaudeProjectSessionFileGlobally() -> URL? {
-        locateLatestClaudeProjectSessionFilesGlobally(limit: 1).first
-    }
-
-    private func locateLatestClaudeProjectSessionFilesGlobally(limit: Int) -> [URL] {
-        guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
-            at: claudeProjectsRootURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
-
-        var allFiles: [(url: URL, modifiedAt: Date)] = []
-
-        for directoryURL in directoryURLs {
+        for dataRoot in resolvedClaudeDataRoots() {
+            let directoryURL = dataRoot.projectsRootURL.appendingPathComponent(projectDirectoryName)
             guard let fileURLs = try? FileManager.default.contentsOfDirectory(
                 at: directoryURL,
                 includingPropertiesForKeys: [.contentModificationDateKey],
@@ -3042,7 +3020,44 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
             for fileURL in fileURLs where fileURL.pathExtension == "jsonl" {
                 let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                allFiles.append((fileURL, modifiedAt))
+                if latestFile == nil || modifiedAt > latestFile!.modifiedAt {
+                    latestFile = (fileURL, modifiedAt)
+                }
+            }
+        }
+
+        return latestFile?.url
+    }
+
+    private func locateLatestClaudeProjectSessionFileGlobally() -> URL? {
+        locateLatestClaudeProjectSessionFilesGlobally(limit: 1).first
+    }
+
+    private func locateLatestClaudeProjectSessionFilesGlobally(limit: Int) -> [URL] {
+        var allFiles: [(url: URL, modifiedAt: Date)] = []
+
+        for dataRoot in resolvedClaudeDataRoots() {
+            guard let directoryURLs = try? FileManager.default.contentsOfDirectory(
+                at: dataRoot.projectsRootURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for directoryURL in directoryURLs {
+                guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+                    at: directoryURL,
+                    includingPropertiesForKeys: [.contentModificationDateKey],
+                    options: [.skipsHiddenFiles]
+                ) else {
+                    continue
+                }
+
+                for fileURL in fileURLs where fileURL.pathExtension == "jsonl" {
+                    let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    allFiles.append((fileURL, modifiedAt))
+                }
             }
         }
 
@@ -3059,6 +3074,28 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         }
 
         return trimmed.replacingOccurrences(of: "/", with: "-")
+    }
+
+    private func resolvedClaudeDataRoots() -> [ClaudeDataRoot] {
+        var rootURLs = [defaultClaudeRootURL]
+
+        if let settingsURLs = try? resolvedClaudeSettingsURLs() {
+            rootURLs.append(contentsOf: settingsURLs.map { settingsURL in
+                settingsURL.deletingLastPathComponent()
+            })
+        }
+
+        var seenPaths = Set<String>()
+        return rootURLs.compactMap { rootURL in
+            let standardizedURL = rootURL.standardizedFileURL
+            let path = standardizedURL.path
+            guard !path.isEmpty, !seenPaths.contains(path) else {
+                return nil
+            }
+
+            seenPaths.insert(path)
+            return ClaudeDataRoot(rootURL: standardizedURL)
+        }
     }
 
     private func refreshedClaudeSession(
@@ -3262,32 +3299,46 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     }
 
     private func discoverClaudeSessions() -> [ClaudeDiscoveredSession] {
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
-            at: claudeSessionsRootURL,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
+        var recordsBySessionID: [String: ClaudeDiscoveredSession] = [:]
 
-        return fileURLs.compactMap { fileURL in
-            guard fileURL.pathExtension == "json",
-                  let data = try? Data(contentsOf: fileURL),
-                  let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data) else {
-                return nil
+        for dataRoot in resolvedClaudeDataRoots() {
+            guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+                at: dataRoot.sessionsRootURL,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
             }
 
-            let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            let startedAt = record.startedAt.flatMap { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } ?? modifiedAt
-            let lastActivityAt = max(startedAt, modifiedAt)
+            for fileURL in fileURLs {
+                guard fileURL.pathExtension == "json",
+                      let data = try? Data(contentsOf: fileURL),
+                      let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data) else {
+                    continue
+                }
 
-            return ClaudeDiscoveredSession(
-                sessionID: record.sessionID,
-                cwd: record.cwd,
-                source: record.entrypoint ?? record.kind ?? "",
-                clientOrigin: clientOrigin(for: record.entrypoint),
-                lastActivityAt: lastActivityAt
-            )
+                let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let startedAt = record.startedAt.flatMap { Date(timeIntervalSince1970: TimeInterval($0) / 1000) } ?? modifiedAt
+                let lastActivityAt = max(startedAt, modifiedAt)
+                let discoveredSession = ClaudeDiscoveredSession(
+                    sessionID: record.sessionID,
+                    cwd: record.cwd,
+                    source: record.entrypoint ?? record.kind ?? "",
+                    clientOrigin: clientOrigin(for: record.entrypoint),
+                    lastActivityAt: lastActivityAt
+                )
+
+                if let existing = recordsBySessionID[record.sessionID],
+                   existing.lastActivityAt >= discoveredSession.lastActivityAt {
+                    continue
+                }
+
+                recordsBySessionID[record.sessionID] = discoveredSession
+            }
+        }
+
+        return recordsBySessionID.values.sorted { lhs, rhs in
+            lhs.lastActivityAt > rhs.lastActivityAt
         }
     }
 
@@ -5095,6 +5146,22 @@ private struct ClaudeDiscoveredSession {
     let source: String
     let clientOrigin: FocusClientOrigin
     let lastActivityAt: Date
+}
+
+private struct ClaudeDataRoot {
+    let rootURL: URL
+
+    var sessionsRootURL: URL {
+        rootURL.appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    var projectsRootURL: URL {
+        rootURL.appendingPathComponent("projects", isDirectory: true)
+    }
+
+    var historyURL: URL {
+        rootURL.appendingPathComponent("history.jsonl", isDirectory: false)
+    }
 }
 
 private struct ClaudeHookPermissionPayload: Decodable {
