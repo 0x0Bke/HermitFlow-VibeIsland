@@ -10,10 +10,23 @@ import SwiftUI
 struct UsageSummaryView: View {
     let claudeUsageSnapshot: ClaudeUsageSnapshot?
     let codexUsageSnapshot: CodexUsageSnapshot?
+    let openCodeUsageSnapshot: OpenCodeUsageSnapshot?
     let displayType: UsageDisplayType
 
+    init(
+        claudeUsageSnapshot: ClaudeUsageSnapshot?,
+        codexUsageSnapshot: CodexUsageSnapshot?,
+        openCodeUsageSnapshot: OpenCodeUsageSnapshot? = nil,
+        displayType: UsageDisplayType
+    ) {
+        self.claudeUsageSnapshot = claudeUsageSnapshot
+        self.codexUsageSnapshot = codexUsageSnapshot
+        self.openCodeUsageSnapshot = openCodeUsageSnapshot
+        self.displayType = displayType
+    }
+
     var body: some View {
-        if claudeUsageSnapshot != nil || codexUsageSnapshot != nil {
+        if claudeUsageSnapshot != nil || codexUsageSnapshot != nil || openCodeUsageSnapshot != nil {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 8) {
                     Text("Usage")
@@ -40,12 +53,17 @@ struct UsageSummaryView: View {
                 if let codexUsageSnapshot, !codexUsageSnapshot.isEmpty {
                     CodexUsageCardView(snapshot: codexUsageSnapshot, displayType: displayType)
                 }
+
+                if let openCodeUsageSnapshot, !openCodeUsageSnapshot.isEmpty {
+                    OpenCodeUsageCardView(snapshot: openCodeUsageSnapshot, displayType: displayType)
+                }
             }
         }
     }
 
     private var sourceLabel: String {
-        if claudeUsageSnapshot?.sourceKind == .remoteProvider {
+        if claudeUsageSnapshot?.sourceKind == .remoteProvider
+            || openCodeUsageSnapshot?.sourceKind == .remoteProvider {
             return "Hybrid"
         }
 

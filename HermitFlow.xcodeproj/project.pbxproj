@@ -117,6 +117,10 @@
 		A10000000000000000000162 /* OpenCodeHookInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000163 /* OpenCodeHookInstaller.swift */; };
 		A10000000000000000000164 /* OpenCodeSQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000165 /* OpenCodeSQLiteReader.swift */; };
 		A10000000000000000000166 /* OpenCodeApprovalExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */; };
+		A10000000000000000000170 /* OpenCodeUsageSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000171 /* OpenCodeUsageSnapshot.swift */; };
+		A10000000000000000000172 /* OpenCodeUsageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000173 /* OpenCodeUsageLoader.swift */; };
+		A10000000000000000000174 /* OpenCodeUsageSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000175 /* OpenCodeUsageSource.swift */; };
+		A10000000000000000000176 /* OpenCodeUsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000177 /* OpenCodeUsageCardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -134,6 +138,10 @@
 		A10000000000000000000163 /* OpenCodeHookInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeHookInstaller.swift; sourceTree = "<group>"; };
 		A10000000000000000000165 /* OpenCodeSQLiteReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeSQLiteReader.swift; sourceTree = "<group>"; };
 		A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeApprovalExecutor.swift; sourceTree = "<group>"; };
+		A10000000000000000000171 /* OpenCodeUsageSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeUsageSnapshot.swift; sourceTree = "<group>"; };
+		A10000000000000000000173 /* OpenCodeUsageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeUsageLoader.swift; sourceTree = "<group>"; };
+		A10000000000000000000175 /* OpenCodeUsageSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeUsageSource.swift; sourceTree = "<group>"; };
+		A10000000000000000000177 /* OpenCodeUsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeUsageCardView.swift; sourceTree = "<group>"; };
 		A10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000007 /* HermitFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HermitFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000008 /* claudecode.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = claudecode.png; sourceTree = "<group>"; };
@@ -553,6 +561,7 @@
 					A10000000000000000000105 /* UsageSummaryView.swift */,
 					A10000000000000000000107 /* ClaudeUsageCardView.swift */,
 					A10000000000000000000109 /* CodexUsageCardView.swift */,
+					A10000000000000000000177 /* OpenCodeUsageCardView.swift */,
 				);
 				path = Usage;
 				sourceTree = "<group>";
@@ -590,6 +599,7 @@
 					A10000000000000000000163 /* OpenCodeHookInstaller.swift */,
 					A10000000000000000000165 /* OpenCodeSQLiteReader.swift */,
 					A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */,
+					A10000000000000000000175 /* OpenCodeUsageSource.swift */,
 				);
 				path = OpenCode;
 				sourceTree = "<group>";
@@ -599,6 +609,7 @@
 				children = (
 					A100000000000000000000F9 /* ClaudeUsageLoader.swift */,
 					A100000000000000000000FB /* CodexUsageLoader.swift */,
+					A10000000000000000000173 /* OpenCodeUsageLoader.swift */,
 					A100000000000000000000FD /* UsageSummaryFormatter.swift */,
 				);
 				path = Usage;
@@ -609,6 +620,7 @@
 				children = (
 					A100000000000000000000F3 /* ClaudeUsageSnapshot.swift */,
 					A100000000000000000000F5 /* CodexUsageSnapshot.swift */,
+					A10000000000000000000171 /* OpenCodeUsageSnapshot.swift */,
 					A100000000000000000000F7 /* UsageProviderState.swift */,
 				);
 				path = Usage;
@@ -814,6 +826,10 @@
 				A10000000000000000000162 /* OpenCodeHookInstaller.swift in Sources */,
 				A10000000000000000000164 /* OpenCodeSQLiteReader.swift in Sources */,
 				A10000000000000000000166 /* OpenCodeApprovalExecutor.swift in Sources */,
+				A10000000000000000000170 /* OpenCodeUsageSnapshot.swift in Sources */,
+				A10000000000000000000172 /* OpenCodeUsageLoader.swift in Sources */,
+				A10000000000000000000174 /* OpenCodeUsageSource.swift in Sources */,
+				A10000000000000000000176 /* OpenCodeUsageCardView.swift in Sources */,
 				A10000000000000000000128 /* DiagnosticsCardView.swift in Sources */,
 				A10000000000000000000130 /* GitHubReleaseAssetDownloader.swift in Sources */,
 				A1000000000000000000012E /* GitHubReleaseUpdateChecker.swift in Sources */,

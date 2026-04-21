@@ -21,11 +21,13 @@ final class ProgressStore: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private let claudeUsageRefreshInterval: TimeInterval = 10
     private let codexUsageRefreshInterval: TimeInterval = 120
+    private let openCodeUsageRefreshInterval: TimeInterval = 120
     private let localQuestionRefreshInterval: TimeInterval = 0.4
     private var usageTimer: Timer?
     private var questionTimer: Timer?
     private var lastClaudeUsageRefreshAt: Date?
     private var lastCodexUsageRefreshAt: Date?
+    private var lastOpenCodeUsageRefreshAt: Date?
     private var lastQuestionRefreshAt: Date?
     private let askUserQuestionModeDefaultsKey = "HermitFlow.askUserQuestionHandlingMode"
     private let questionStore = QuestionStore()
@@ -35,6 +37,7 @@ final class ProgressStore: ObservableObject {
 
     @Published private(set) var claudeUsageSnapshot: ClaudeUsageSnapshot?
     @Published private(set) var codexUsageSnapshot: CodexUsageSnapshot?
+    @Published private(set) var openCodeUsageSnapshot: OpenCodeUsageSnapshot?
     @Published private(set) var questionPrompt: ClaudeQuestionPrompt?
     @Published private(set) var questionErrorMessage: String?
     @Published private(set) var activeQuestionSupportsSubmission = true
@@ -47,6 +50,7 @@ final class ProgressStore: ObservableObject {
         ) ?? .takeOver
         claudeUsageSnapshot = appStore.claudeUsageSnapshot
         codexUsageSnapshot = appStore.codexUsageSnapshot
+        openCodeUsageSnapshot = appStore.openCodeUsageSnapshot
 
         appStore.objectWillChange
             .sink { [weak self] _ in
@@ -58,6 +62,7 @@ final class ProgressStore: ObservableObject {
             .sink { [weak self] providerState in
                 self?.claudeUsageSnapshot = providerState.claude
                 self?.codexUsageSnapshot = providerState.codex
+                self?.openCodeUsageSnapshot = providerState.openCode
             }
             .store(in: &cancellables)
     }
@@ -99,9 +104,14 @@ final class ProgressStore: ObservableObject {
     var customCompletionNotificationSoundPath: String? { appStore.customCompletionNotificationSoundPath }
     var usageSnapshots: [ProviderUsageSnapshot] { appStore.usageSnapshots }
     var usageProviderState: UsageProviderState { appStore.usageProviderState }
-    var hasUsageContent: Bool { claudeUsageSnapshot?.isEmpty == false || codexUsageSnapshot?.isEmpty == false }
+    var hasUsageContent: Bool {
+        claudeUsageSnapshot?.isEmpty == false
+            || codexUsageSnapshot?.isEmpty == false
+            || openCodeUsageSnapshot?.isEmpty == false
+    }
     var claudeUsageSummaryText: String? { UsageSummaryFormatter.claudeSummaryText(claudeUsageSnapshot, displayType: usageDisplayType) }
     var codexUsageSummaryText: String? { UsageSummaryFormatter.codexSummaryText(codexUsageSnapshot, displayType: usageDisplayType) }
+    var openCodeUsageSummaryText: String? { UsageSummaryFormatter.openCodeSummaryText(openCodeUsageSnapshot, displayType: usageDisplayType) }
     var sourceHealthReports: [SourceHealthReport] { appStore.sourceHealthReports }
     var windowSize: CGSize { appStore.windowSize }
     var cameraGapWidth: CGFloat { appStore.cameraGapWidth }
@@ -349,6 +359,10 @@ final class ProgressStore: ObservableObject {
         appStore.refreshCodexUsage()
     }
 
+    func refreshOpenCodeUsage() {
+        appStore.refreshOpenCodeUsage()
+    }
+
     func refreshClaudeUsageState() {
         appStore.refreshClaudeUsage()
         lastClaudeUsageRefreshAt = .now
@@ -359,9 +373,17 @@ final class ProgressStore: ObservableObject {
         lastCodexUsageRefreshAt = .now
     }
 
+    func refreshOpenCodeUsageState() {
+        appStore.refreshOpenCodeUsage()
+        lastOpenCodeUsageRefreshAt = .now
+    }
+
     func refreshUsageState() {
-        refreshClaudeUsageState()
-        refreshCodexUsageState()
+        appStore.refreshUsage()
+        let now = Date()
+        lastClaudeUsageRefreshAt = now
+        lastCodexUsageRefreshAt = now
+        lastOpenCodeUsageRefreshAt = now
     }
 
     func refreshLocalQuestionStatus() {
@@ -467,12 +489,10 @@ final class ProgressStore: ObservableObject {
     }
 
     private func refreshUsageTimerTick(now: Date = .now) {
-        if shouldRefreshClaudeUsage(now: now) {
-            refreshClaudeUsageState()
-        }
-
-        if shouldRefreshCodexUsage(now: now) {
-            refreshCodexUsageState()
+        if shouldRefreshClaudeUsage(now: now)
+            || shouldRefreshCodexUsage(now: now)
+            || shouldRefreshOpenCodeUsage(now: now) {
+            refreshUsageState()
         }
     }
 
@@ -497,6 +517,14 @@ final class ProgressStore: ObservableObject {
         }
 
         return now.timeIntervalSince(lastCodexUsageRefreshAt) >= codexUsageRefreshInterval
+    }
+
+    private func shouldRefreshOpenCodeUsage(now: Date) -> Bool {
+        guard let lastOpenCodeUsageRefreshAt else {
+            return true
+        }
+
+        return now.timeIntervalSince(lastOpenCodeUsageRefreshAt) >= openCodeUsageRefreshInterval
     }
 
     private func shouldRefreshQuestion(now: Date) -> Bool {

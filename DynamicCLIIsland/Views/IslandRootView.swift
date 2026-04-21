@@ -460,6 +460,10 @@ private extension IslandRootView {
                     longValue: displayedPercentage(for: codexWindow(minutes: 10_080, in: codexUsageSnapshot))
                 )
             }
+
+            if let openCodeUsageSnapshot = store.openCodeUsageSnapshot, !openCodeUsageSnapshot.isEmpty {
+                openCodeUsageProviderRow(snapshot: openCodeUsageSnapshot)
+            }
         }
     }
 
@@ -474,6 +478,8 @@ private extension IslandRootView {
             Text(title)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.78))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
                 .frame(width: 108, alignment: .leading)
 
             usageMetricChip(label: shortLabel, value: shortValue)
@@ -488,6 +494,8 @@ private extension IslandRootView {
             Text(claudeUsageTitle(for: snapshot))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.78))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
                 .frame(width: 108, alignment: .leading)
 
             ForEach(windows, id: \.id) { item in
@@ -502,6 +510,31 @@ private extension IslandRootView {
         }
 
         return "Claude"
+    }
+
+    func openCodeUsageProviderRow(snapshot: OpenCodeUsageSnapshot) -> some View {
+        let windows = Array(snapshot.displayWindows.prefix(2))
+
+        return HStack(alignment: .center, spacing: 10) {
+            Text(openCodeUsageTitle(for: snapshot))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.78))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(width: 108, alignment: .leading)
+
+            ForEach(windows, id: \.id) { item in
+                usageMetricChip(label: item.label, value: displayedPercentage(for: item.window))
+            }
+        }
+    }
+
+    func openCodeUsageTitle(for snapshot: OpenCodeUsageSnapshot) -> String {
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            return "OpenCode · \(providerDisplayName)"
+        }
+
+        return "OpenCode"
     }
 
     func usageMetricChip(label: String, value: Double?) -> some View {
@@ -551,6 +584,10 @@ private extension IslandRootView {
     }
 
     func displayedPercentage(for window: ClaudeUsageWindow) -> Double {
+        store.usageDisplayType.percentageValue(used: window.usedPercentage, remaining: window.leftPercentage)
+    }
+
+    func displayedPercentage(for window: OpenCodeUsageWindow) -> Double {
         store.usageDisplayType.percentageValue(used: window.usedPercentage, remaining: window.leftPercentage)
     }
 

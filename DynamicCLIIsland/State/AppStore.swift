@@ -89,6 +89,7 @@ final class AppStore: ObservableObject {
     var usageProviderState: UsageProviderState { runtimeStore.usageProviderState }
     var claudeUsageSnapshot: ClaudeUsageSnapshot? { runtimeStore.claudeUsageSnapshot }
     var codexUsageSnapshot: CodexUsageSnapshot? { runtimeStore.codexUsageSnapshot }
+    var openCodeUsageSnapshot: OpenCodeUsageSnapshot? { runtimeStore.openCodeUsageSnapshot }
     var sourceHealthReports: [SourceHealthReport] { runtimeStore.sourceHealthReports }
     var sourceMode: IslandSourceMode { runtimeStore.sourceMode }
     var externalFilePath: String? { runtimeStore.externalFilePath }
@@ -304,6 +305,14 @@ final class AppStore: ObservableObject {
 
     func refreshCodexUsage() {
         runtimeStore.refreshCodexUsage()
+    }
+
+    func refreshOpenCodeUsage() {
+        runtimeStore.refreshOpenCodeUsage()
+    }
+
+    func refreshUsage() {
+        runtimeStore.refreshUsage()
     }
 
     func startDemoMode() {

@@ -52,6 +52,25 @@ enum UsageSummaryFormatter {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    static func openCodeSummaryText(_ snapshot: OpenCodeUsageSnapshot?, displayType: UsageDisplayType) -> String? {
+        guard let snapshot, !snapshot.isEmpty else {
+            return nil
+        }
+
+        var parts: [String] = []
+        if let providerDisplayName = snapshot.providerDisplayName, !providerDisplayName.isEmpty {
+            parts.append(providerDisplayName)
+        }
+        for entry in snapshot.displayWindows.prefix(2) {
+            parts.append(displayType.summaryPart(label: entry.label, used: entry.window.roundedUsedPercentage, remaining: entry.window.roundedLeftPercentage))
+        }
+        if let updatedText = updatedText(snapshot.capturedAt) {
+            parts.append("updated \(updatedText)")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     static func updatedText(_ date: Date?) -> String? {
         guard let date else { return nil }
 

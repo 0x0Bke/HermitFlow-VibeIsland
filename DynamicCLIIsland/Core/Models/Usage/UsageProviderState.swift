@@ -10,11 +10,12 @@ import Foundation
 struct UsageProviderState: Equatable, Hashable {
     var claude: ClaudeUsageSnapshot?
     var codex: CodexUsageSnapshot?
+    var openCode: OpenCodeUsageSnapshot?
 
-    static let empty = UsageProviderState(claude: nil, codex: nil)
+    static let empty = UsageProviderState(claude: nil, codex: nil, openCode: nil)
 
     var hasAnyUsage: Bool {
-        hasClaudeUsage || hasCodexUsage
+        hasClaudeUsage || hasCodexUsage || hasOpenCodeUsage
     }
 
     var hasClaudeUsage: Bool {
@@ -27,8 +28,13 @@ struct UsageProviderState: Equatable, Hashable {
         return !codex.isEmpty
     }
 
+    var hasOpenCodeUsage: Bool {
+        guard let openCode else { return false }
+        return !openCode.isEmpty
+    }
+
     var usageCardCount: Int {
-        (hasClaudeUsage ? 1 : 0) + (hasCodexUsage ? 1 : 0)
+        (hasClaudeUsage ? 1 : 0) + (hasCodexUsage ? 1 : 0) + (hasOpenCodeUsage ? 1 : 0)
     }
 
     var legacySnapshots: [ProviderUsageSnapshot] {
@@ -54,6 +60,18 @@ struct UsageProviderState: Equatable, Hashable {
                     shortWindowRemaining: sortedWindows.first?.leftPercentage ?? 0,
                     longWindowRemaining: sortedWindows.last?.leftPercentage ?? 0,
                     updatedAt: codex.capturedAt ?? .distantPast
+                )
+            )
+        }
+
+        if let openCode, !openCode.isEmpty {
+            let displayWindows = openCode.displayWindows
+            snapshots.append(
+                ProviderUsageSnapshot(
+                    origin: .openCode,
+                    shortWindowRemaining: displayWindows.first?.window.leftPercentage ?? 0,
+                    longWindowRemaining: displayWindows.dropFirst().first?.window.leftPercentage ?? 0,
+                    updatedAt: openCode.capturedAt ?? .distantPast
                 )
             )
         }

@@ -39,6 +39,10 @@ final class RuntimeStore: ObservableObject {
         usageProviderState.codex
     }
 
+    var openCodeUsageSnapshot: OpenCodeUsageSnapshot? {
+        usageProviderState.openCode
+    }
+
     private let localCodexPollInterval: TimeInterval = 1.0
     private let localApprovalPollInterval: TimeInterval = 0.25
     private let accessibilityPermissionPollInterval: TimeInterval = 1.0
@@ -73,6 +77,7 @@ final class RuntimeStore: ObservableObject {
     let localOpenCodeSource: LocalOpenCodeSource
     let claudeUsageSource: ClaudeUsageSource
     let codexUsageSource: CodexRolloutUsageSource
+    let openCodeUsageSource: OpenCodeUsageSource
     let claudeHookInstaller: ClaudeHookInstaller
     let claudeHookHealthChecker: ClaudeHookHealthChecker
     let claudeHookBootstrap: ClaudeHookBootstrap
@@ -106,6 +111,7 @@ final class RuntimeStore: ObservableObject {
         localOpenCodeSource: LocalOpenCodeSource = LocalOpenCodeSource(),
         claudeUsageSource: ClaudeUsageSource = ClaudeUsageSource(),
         codexUsageSource: CodexRolloutUsageSource = CodexRolloutUsageSource(),
+        openCodeUsageSource: OpenCodeUsageSource = OpenCodeUsageSource(),
         claudeHookInstaller: ClaudeHookInstaller? = nil,
         claudeHookHealthChecker: ClaudeHookHealthChecker? = nil,
         claudeHookBootstrap: ClaudeHookBootstrap? = nil,
@@ -140,6 +146,7 @@ final class RuntimeStore: ObservableObject {
         self.localOpenCodeSource = localOpenCodeSource
         self.claudeUsageSource = claudeUsageSource
         self.codexUsageSource = codexUsageSource
+        self.openCodeUsageSource = openCodeUsageSource
         let resolvedClaudeHookInstaller = claudeHookInstaller ?? ClaudeHookInstaller(source: localClaudeSource)
         let resolvedClaudeHTTPCallbackServer = claudeHTTPCallbackServer ?? ClaudeHTTPCallbackServer(source: localClaudeSource)
         let resolvedClaudeHookHealthChecker = claudeHookHealthChecker ?? ClaudeHookHealthChecker(
@@ -478,11 +485,19 @@ final class RuntimeStore: ObservableObject {
     }
 
     func refreshClaudeUsage() {
-        refreshUsageIfNeeded(force: true, includeCodex: false)
+        refreshUsageIfNeeded(force: true, includeCodex: false, includeOpenCode: false)
     }
 
     func refreshCodexUsage() {
-        refreshUsageIfNeeded(force: true, includeClaude: false)
+        refreshUsageIfNeeded(force: true, includeClaude: false, includeOpenCode: false)
+    }
+
+    func refreshOpenCodeUsage() {
+        refreshUsageIfNeeded(force: true, includeClaude: false, includeCodex: false)
+    }
+
+    func refreshUsage() {
+        refreshUsageIfNeeded(force: true)
     }
 
     func apply(activitySnapshot: ActivitySourceSnapshot) {
@@ -669,7 +684,8 @@ final class RuntimeStore: ObservableObject {
     private func refreshUsageIfNeeded(
         force: Bool = false,
         includeClaude: Bool = true,
-        includeCodex: Bool = true
+        includeCodex: Bool = true,
+        includeOpenCode: Bool = true
     ) {
         guard force || shouldRefreshUsage(now: .now) else {
             return
@@ -683,17 +699,20 @@ final class RuntimeStore: ObservableObject {
         let existingState = reducerState.usageProviderState
         let claudeUsageSource = self.claudeUsageSource
         let codexUsageSource = self.codexUsageSource
+        let openCodeUsageSource = self.openCodeUsageSource
 
         usageQueue.async { [weak self] in
             let claudeSnapshot = includeClaude ? claudeUsageSource.fetchUsageSnapshot() : existingState.claude
             let codexSnapshot = includeCodex ? codexUsageSource.fetchUsageSnapshot() : existingState.codex
+            let openCodeSnapshot = includeOpenCode ? openCodeUsageSource.fetchUsageSnapshot() : existingState.openCode
             Logger.log(
-                "Usage refresh completed. includeClaude=\(includeClaude) claudeProvider=\(claudeSnapshot?.providerID ?? "nil") claudeDisplay=\(claudeSnapshot?.providerDisplayName ?? "nil") includeCodex=\(includeCodex).",
+                "Usage refresh completed. includeClaude=\(includeClaude) claudeProvider=\(claudeSnapshot?.providerID ?? "nil") claudeDisplay=\(claudeSnapshot?.providerDisplayName ?? "nil") includeCodex=\(includeCodex) includeOpenCode=\(includeOpenCode) openCodeProvider=\(openCodeSnapshot?.providerID ?? "nil") openCodeDisplay=\(openCodeSnapshot?.providerDisplayName ?? "nil").",
                 category: .store
             )
             let providerState = UsageProviderState(
                 claude: claudeSnapshot,
-                codex: codexSnapshot
+                codex: codexSnapshot,
+                openCode: openCodeSnapshot
             )
 
             Task { @MainActor [weak self] in
