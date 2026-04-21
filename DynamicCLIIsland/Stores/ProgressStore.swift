@@ -115,14 +115,17 @@ final class ProgressStore: ObservableObject {
     var focusTargetLabel: String? { appStore.focusTargetLabel }
     var accessibilityPermissionMessage: String? { appStore.accessibilityPermissionMessage }
     var panelTitle: String {
-        if hasQuestionPrompt {
-            return "Claude Needs Input"
+        if let prompt = activeQuestionPrompt {
+            return prompt.source == .openCode ? "OpenCode Needs Input" : "Claude Needs Input"
         }
         return appStore.panelTitle
     }
     var panelSubtitle: String {
         if let prompt = activeQuestionPrompt {
-            return prompt.title.isEmpty ? (prompt.message ?? "Claude is waiting for your answer") : prompt.title
+            let fallback = prompt.source == .openCode
+                ? "OpenCode is waiting for your answer"
+                : "Claude is waiting for your answer"
+            return prompt.title.isEmpty ? (prompt.message ?? fallback) : prompt.title
         }
         return appStore.panelSubtitle
     }
@@ -322,7 +325,7 @@ final class ProgressStore: ObservableObject {
             questionPrompt = nil
             questionStore.clear()
             syncQuestionPresentation()
-            appStore.dispatch(.runtimeStatusMessageUpdated("Claude question cancelled"))
+            appStore.dispatch(.runtimeStatusMessageUpdated(questionStatusMessage(for: prompt, action: "cancelled")))
             return
         }
 
@@ -539,7 +542,12 @@ final class ProgressStore: ObservableObject {
         questionPrompt = nil
         questionStore.clear()
         syncQuestionPresentation()
-        appStore.dispatch(.runtimeStatusMessageUpdated("Claude Code received your answer"))
+        appStore.dispatch(.runtimeStatusMessageUpdated(questionStatusMessage(for: prompt, action: "received your answer")))
+    }
+
+    private func questionStatusMessage(for prompt: ClaudeQuestionPrompt, action: String) -> String {
+        let source = prompt.source == .openCode ? "OpenCode" : "Claude Code"
+        return "\(source) \(action)"
     }
 
     private func syncQuestionPresentation() {

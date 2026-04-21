@@ -4,6 +4,7 @@ import SwiftUI
 enum CLIProvider: String, Codable, CaseIterable, Identifiable {
     case claude
     case codex
+    case openCode
     case generic
 
     var id: String { rawValue }
@@ -14,6 +15,8 @@ enum CLIProvider: String, Codable, CaseIterable, Identifiable {
             return "Claude"
         case .codex:
             return "Codex"
+        case .openCode:
+            return "OpenCode"
         case .generic:
             return "CLI"
         }
@@ -25,6 +28,8 @@ enum CLIProvider: String, Codable, CaseIterable, Identifiable {
             return Color(red: 0.96, green: 0.58, blue: 0.29)
         case .codex:
             return Color(red: 0.33, green: 0.78, blue: 0.95)
+        case .openCode:
+            return Color(red: 0.49, green: 0.83, blue: 0.53)
         case .generic:
             return Color(red: 0.54, green: 0.72, blue: 0.99)
         }

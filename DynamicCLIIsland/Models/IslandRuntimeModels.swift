@@ -94,6 +94,7 @@ enum SessionFreshness: String, Hashable {
 enum SessionOrigin: String, Hashable, Codable {
     case claude
     case codex
+    case openCode
     case generic
 
     var provider: CLIProvider {
@@ -102,6 +103,8 @@ enum SessionOrigin: String, Hashable, Codable {
             return .claude
         case .codex:
             return .codex
+        case .openCode:
+            return .openCode
         case .generic:
             return .generic
         }
@@ -114,6 +117,7 @@ enum FocusClientOrigin: String, Hashable, Codable {
     case codexDesktop
     case codexCLI
     case codexVSCode
+    case openCodeCLI
     case unknown
 
     var displayName: String {
@@ -128,6 +132,8 @@ enum FocusClientOrigin: String, Hashable, Codable {
             return "Terminal Codex"
         case .codexVSCode:
             return "VS Code Codex"
+        case .openCodeCLI:
+            return "OpenCode CLI"
         case .unknown:
             return "Unknown Session"
         }
@@ -137,6 +143,7 @@ enum FocusClientOrigin: String, Hashable, Codable {
 enum ApprovalResolutionKind: String, Hashable {
     case accessibilityAutomation
     case localHTTPHook
+    case openCodeServerAPI
 }
 
 enum TerminalClient: String, Hashable, Codable {

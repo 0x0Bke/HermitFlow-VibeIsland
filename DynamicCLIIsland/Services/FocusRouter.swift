@@ -34,6 +34,8 @@ final class FocusRouter {
             return 2
         case .codexCLI:
             return 1
+        case .openCodeCLI:
+            return 1
         case .unknown:
             return 0
         }

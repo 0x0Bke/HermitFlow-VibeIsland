@@ -186,6 +186,8 @@ struct ApprovalPanelView: View {
             return Color(red: 1.00, green: 0.77, blue: 0.50)
         case .codex:
             return Color(red: 0.63, green: 0.88, blue: 1.00)
+        case .openCode:
+            return Color(red: 0.63, green: 0.93, blue: 0.68)
         case .generic:
             return Color(red: 0.74, green: 0.84, blue: 1.00)
         }

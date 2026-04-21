@@ -70,12 +70,14 @@ final class RuntimeStore: ObservableObject {
     let accessibilityPermissionMonitor: AccessibilityPermissionMonitor
     let localCodexSource: LocalCodexSource
     let localClaudeSource: LocalClaudeSource
+    let localOpenCodeSource: LocalOpenCodeSource
     let claudeUsageSource: ClaudeUsageSource
     let codexUsageSource: CodexRolloutUsageSource
     let claudeHookInstaller: ClaudeHookInstaller
     let claudeHookHealthChecker: ClaudeHookHealthChecker
     let claudeHookBootstrap: ClaudeHookBootstrap
     let claudeHTTPCallbackServer: ClaudeHTTPCallbackServer
+    let openCodeHookInstaller: OpenCodeHookInstaller
     let codexHookSource: CodexHookSource
     let codexSQLiteReader: CodexSQLiteReader
     let codexSessionReader: CodexSessionReader
@@ -88,6 +90,7 @@ final class RuntimeStore: ObservableObject {
     let decoder: JSONDecoder
     let accessibilityApprovalExecutor: AccessibilityApprovalExecutor
     let httpHookApprovalExecutor: HTTPHookApprovalExecutor
+    let openCodeApprovalExecutor: OpenCodeApprovalExecutor
 
     weak var presentationStore: PresentationStore?
 
@@ -100,12 +103,14 @@ final class RuntimeStore: ObservableObject {
         accessibilityPermissionMonitor: AccessibilityPermissionMonitor = AccessibilityPermissionMonitor(),
         localCodexSource: LocalCodexSource = LocalCodexSource(),
         localClaudeSource: LocalClaudeSource = LocalClaudeSource(),
+        localOpenCodeSource: LocalOpenCodeSource = LocalOpenCodeSource(),
         claudeUsageSource: ClaudeUsageSource = ClaudeUsageSource(),
         codexUsageSource: CodexRolloutUsageSource = CodexRolloutUsageSource(),
         claudeHookInstaller: ClaudeHookInstaller? = nil,
         claudeHookHealthChecker: ClaudeHookHealthChecker? = nil,
         claudeHookBootstrap: ClaudeHookBootstrap? = nil,
         claudeHTTPCallbackServer: ClaudeHTTPCallbackServer? = nil,
+        openCodeHookInstaller: OpenCodeHookInstaller = OpenCodeHookInstaller(),
         codexHookSource: CodexHookSource? = nil,
         codexSQLiteReader: CodexSQLiteReader = CodexSQLiteReader(),
         codexSessionReader: CodexSessionReader = CodexSessionReader(),
@@ -117,6 +122,7 @@ final class RuntimeStore: ObservableObject {
         demoProgressSource: DemoProgressSource = DemoProgressSource(),
         accessibilityApprovalExecutor: AccessibilityApprovalExecutor? = nil,
         httpHookApprovalExecutor: HTTPHookApprovalExecutor? = nil,
+        openCodeApprovalExecutor: OpenCodeApprovalExecutor? = nil,
         decoder: JSONDecoder = {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
@@ -131,6 +137,7 @@ final class RuntimeStore: ObservableObject {
         self.accessibilityPermissionMonitor = accessibilityPermissionMonitor
         self.localCodexSource = localCodexSource
         self.localClaudeSource = localClaudeSource
+        self.localOpenCodeSource = localOpenCodeSource
         self.claudeUsageSource = claudeUsageSource
         self.codexUsageSource = codexUsageSource
         let resolvedClaudeHookInstaller = claudeHookInstaller ?? ClaudeHookInstaller(source: localClaudeSource)
@@ -147,6 +154,7 @@ final class RuntimeStore: ObservableObject {
             callbackServer: resolvedClaudeHTTPCallbackServer,
             healthChecker: resolvedClaudeHookHealthChecker
         )
+        self.openCodeHookInstaller = openCodeHookInstaller
         self.codexHookSource = codexHookSource ?? CodexHookSource(source: localCodexSource, sessionReader: codexSessionReader)
         self.codexSQLiteReader = codexSQLiteReader
         self.codexSessionReader = codexSessionReader
@@ -164,11 +172,18 @@ final class RuntimeStore: ObservableObject {
             )
         self.httpHookApprovalExecutor = httpHookApprovalExecutor
             ?? HTTPHookApprovalExecutor(localClaudeSource: localClaudeSource)
+        self.openCodeApprovalExecutor = openCodeApprovalExecutor ?? OpenCodeApprovalExecutor()
         accessibilityPromptDismissed = UserDefaults.standard.bool(forKey: accessibilityPromptDismissedDefaultsKey)
     }
 
     func handleLaunch() {
         let claudeReport = claudeHookBootstrap.bootstrap()
+        localOpenCodeSource.startCallbackServer()
+        do {
+            try openCodeHookInstaller.resync()
+        } catch {
+            dispatch(.runtimeErrorUpdated("OpenCode hook setup failed"))
+        }
         refreshSourceHealthReports(claudeReport: claudeReport)
         refreshAccessibilityPermissionStatus()
         refreshUsageIfNeeded(force: true)
@@ -368,10 +383,15 @@ final class RuntimeStore: ObservableObject {
         localCodexRefreshInFlight = true
         let source = localCodexSource
         let claudeSource = localClaudeSource
+        let openCodeSource = localOpenCodeSource
         localCodexQueue.async { [weak self] in
             let codexSnapshot = source.fetchActivity()
             let claudeSnapshot = claudeSource.fetchActivity()
-            let snapshot = ActivitySnapshotMerger.merge(codexSnapshot, claudeSnapshot)
+            let openCodeSnapshot = openCodeSource.fetchActivity()
+            let snapshot = ActivitySnapshotMerger.merge(
+                ActivitySnapshotMerger.merge(codexSnapshot, claudeSnapshot),
+                openCodeSnapshot
+            )
 
             Task { @MainActor [weak self] in
                 guard let self else {
@@ -397,11 +417,17 @@ final class RuntimeStore: ObservableObject {
         localApprovalRefreshInFlight = true
         let source = localCodexSource
         let claudeSource = localClaudeSource
+        let openCodeSource = localOpenCodeSource
         localApprovalQueue.async { [weak self] in
             let codexApprovalProbe = source.fetchApprovalProbeResult()
+            let claudeApprovalRequest = claudeSource.fetchLatestApprovalRequest()
+            let openCodeApprovalRequest = openCodeSource.fetchLatestApprovalRequest()
             let approvalRequest = ApprovalRequestMerger.merge(
-                codexApprovalProbe.pendingRequest,
-                claudeSource.fetchLatestApprovalRequest()
+                ApprovalRequestMerger.merge(
+                    codexApprovalProbe.pendingRequest,
+                    claudeApprovalRequest
+                ),
+                openCodeApprovalRequest
             )
 
             Task { @MainActor [weak self] in
@@ -559,6 +585,8 @@ final class RuntimeStore: ObservableObject {
         switch request.resolutionKind {
         case .localHTTPHook:
             executorResult = httpHookApprovalExecutor.execute(decision: decision, request: request)
+        case .openCodeServerAPI:
+            executorResult = openCodeApprovalExecutor.execute(decision: decision, request: request)
         case .accessibilityAutomation:
             refreshAccessibilityPermissionStatus()
             executorResult = accessibilityApprovalExecutor.execute(decision: decision, request: request)
@@ -714,6 +742,7 @@ final class RuntimeStore: ObservableObject {
 
     private func refreshSourceHealthReports(claudeReport: SourceHealthReport? = nil) {
         let effectiveClaudeReport = filteredHealthReport(claudeReport ?? claudeHookHealthChecker.healthReport())
+        let openCodeReport = filteredHealthReport(openCodeHookInstaller.healthReport())
         let codexIssues = filteredHealthIssues(
             codexHookSource.healthReport().issues
                 + codexSQLiteReader.healthIssues()
@@ -722,7 +751,7 @@ final class RuntimeStore: ObservableObject {
         )
         let codexReport = SourceHealthReport(sourceName: "Codex", issues: codexIssues)
 
-        sourceHealthReports = [effectiveClaudeReport, codexReport].filter(\.hasIssues)
+        sourceHealthReports = [effectiveClaudeReport, codexReport, openCodeReport].filter(\.hasIssues)
     }
 
     private func filteredHealthReport(_ report: SourceHealthReport) -> SourceHealthReport {

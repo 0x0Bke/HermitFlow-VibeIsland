@@ -35,6 +35,16 @@ enum FilePaths {
     static let claudeStatusLineDebug = URL(fileURLWithPath: "/tmp/hermitflow-claude-statusline-debug.json")
     static let codexHome = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex", isDirectory: true)
+    static let openCodeConfigDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/opencode", isDirectory: true)
+    static let openCodeConfigFile = openCodeConfigDirectory
+        .appendingPathComponent("opencode.json", isDirectory: false)
+    static let openCodePluginsDirectory = openCodeConfigDirectory
+        .appendingPathComponent("plugins", isDirectory: true)
+    static let openCodeDataDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local/share/opencode", isDirectory: true)
+    static let openCodeDatabase = openCodeDataDirectory
+        .appendingPathComponent("opencode.db", isDirectory: false)
     static let debugLog = URL(fileURLWithPath: "/tmp/hermitflow-debug.log")
 
     static func expandingTilde(_ path: String) -> URL {

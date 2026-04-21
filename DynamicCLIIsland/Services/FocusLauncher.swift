@@ -137,7 +137,7 @@ final class FocusLauncher {
             return performGraphicalApproval(decision, for: target)
         case .codexDesktop:
             return bringToFront(target) ? .routedToWindow : .applicationNotFound
-        case .codexCLI:
+        case .codexCLI, .openCodeCLI:
             return performTerminalApproval(decision, for: target)
         case .codexVSCode, .unknown:
             return performGraphicalApproval(decision, for: target)
@@ -246,7 +246,9 @@ final class FocusLauncher {
     }
 
     private func routeTerminalWindowIfPossible(for target: FocusTarget) -> Bool {
-        guard target.clientOrigin == .claudeCLI || target.clientOrigin == .codexCLI else {
+        guard target.clientOrigin == .claudeCLI
+            || target.clientOrigin == .codexCLI
+            || target.clientOrigin == .openCodeCLI else {
             return false
         }
 
@@ -377,7 +379,7 @@ final class FocusLauncher {
                 FocusAppDescriptor(bundleIdentifier: "com.microsoft.VSCode", appName: "Visual Studio Code"),
                 FocusAppDescriptor(bundleIdentifier: "com.microsoft.VSCodeInsiders", appName: "Visual Studio Code - Insiders")
             ]
-        case .codexCLI:
+        case .codexCLI, .openCodeCLI:
             let preferredDescriptor: FocusAppDescriptor? = {
                 switch target.terminalClient {
                 case .warp:

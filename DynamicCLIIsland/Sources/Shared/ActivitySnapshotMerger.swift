@@ -18,7 +18,8 @@ enum ActivitySnapshotMerger {
 
         let statusMessage: String
         if !lhs.sessions.isEmpty, !rhs.sessions.isEmpty {
-            statusMessage = "Watching local Codex + Claude Code activity"
+            let originNames = orderedOriginNames(for: lhs.sessions + rhs.sessions)
+            statusMessage = "Watching \(originNames.joined(separator: " + ")) activity"
         } else if !lhs.sessions.isEmpty {
             statusMessage = lhs.statusMessage
         } else if !rhs.sessions.isEmpty {
@@ -71,6 +72,27 @@ enum ActivitySnapshotMerger {
             return 1
         case .idle:
             return 0
+        }
+    }
+
+    private static func orderedOriginNames(for sessions: [AgentSessionSnapshot]) -> [String] {
+        let order: [SessionOrigin] = [.codex, .claude, .openCode, .generic]
+        let presentOrigins = Set(sessions.map(\.origin))
+        return order
+            .filter { presentOrigins.contains($0) }
+            .map(displayName(for:))
+    }
+
+    private static func displayName(for origin: SessionOrigin) -> String {
+        switch origin {
+        case .claude:
+            return "Claude Code"
+        case .codex:
+            return "Codex"
+        case .openCode:
+            return "OpenCode"
+        case .generic:
+            return "CLI"
         }
     }
 }

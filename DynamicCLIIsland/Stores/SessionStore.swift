@@ -181,6 +181,8 @@ final class SessionStore {
             return .claude
         case .codex:
             return .codex
+        case .openCode:
+            return .openCode
         case .generic:
             return .generic
         }

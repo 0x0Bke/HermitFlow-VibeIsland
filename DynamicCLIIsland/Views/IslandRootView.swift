@@ -892,6 +892,8 @@ private extension IslandRootView {
             return Color(red: 0.23, green: 0.51, blue: 0.96)
         case .codex:
             return Color(red: 0.02, green: 0.71, blue: 0.83)
+        case .openCode:
+            return Color(red: 0.30, green: 0.72, blue: 0.34)
         case .generic:
             return Color.white.opacity(0.72)
         }
@@ -903,6 +905,8 @@ private extension IslandRootView {
             return Color(red: 0.23, green: 0.51, blue: 0.96).opacity(0.14)
         case .codex:
             return Color(red: 0.02, green: 0.71, blue: 0.83).opacity(0.14)
+        case .openCode:
+            return Color(red: 0.30, green: 0.72, blue: 0.34).opacity(0.14)
         case .generic:
             return Color.white.opacity(0.08)
         }

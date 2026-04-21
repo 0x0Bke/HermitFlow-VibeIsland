@@ -113,6 +113,10 @@
 		A10000000000000000000152 /* DotMatrixSineWaveStatusGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000151 /* DotMatrixSineWaveStatusGlyph.swift */; };
 		A10000000000000000000154 /* DotMatrixSuccessStatusGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000153 /* DotMatrixSuccessStatusGlyph.swift */; };
 		A10000000000000000000156 /* DotMatrixFailureStatusGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000155 /* DotMatrixFailureStatusGlyph.swift */; };
+		A10000000000000000000160 /* OpenCodeHookBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000161 /* OpenCodeHookBridge.swift */; };
+		A10000000000000000000162 /* OpenCodeHookInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000163 /* OpenCodeHookInstaller.swift */; };
+		A10000000000000000000164 /* OpenCodeSQLiteReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000165 /* OpenCodeSQLiteReader.swift */; };
+		A10000000000000000000166 /* OpenCodeApprovalExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -126,6 +130,10 @@
 		A10000000000000000000151 /* DotMatrixSineWaveStatusGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotMatrixSineWaveStatusGlyph.swift; sourceTree = "<group>"; };
 		A10000000000000000000153 /* DotMatrixSuccessStatusGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotMatrixSuccessStatusGlyph.swift; sourceTree = "<group>"; };
 		A10000000000000000000155 /* DotMatrixFailureStatusGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotMatrixFailureStatusGlyph.swift; sourceTree = "<group>"; };
+		A10000000000000000000161 /* OpenCodeHookBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeHookBridge.swift; sourceTree = "<group>"; };
+		A10000000000000000000163 /* OpenCodeHookInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeHookInstaller.swift; sourceTree = "<group>"; };
+		A10000000000000000000165 /* OpenCodeSQLiteReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeSQLiteReader.swift; sourceTree = "<group>"; };
+		A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeApprovalExecutor.swift; sourceTree = "<group>"; };
 		A10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000007 /* HermitFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HermitFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000008 /* claudecode.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = claudecode.png; sourceTree = "<group>"; };
@@ -338,6 +346,7 @@
 				children = (
 					A1000000000000000000010B /* Claude */,
 					A1000000000000000000010C /* Codex */,
+					A10000000000000000000168 /* OpenCode */,
 					A10000000000000000000017 /* LocalCodexSource.swift */,
 					A10000000000000000000010 /* ProgressSources.swift */,
 					A100000000000000000000D6 /* Shared */,
@@ -574,6 +583,17 @@
 				path = Codex;
 				sourceTree = "<group>";
 			};
+			A10000000000000000000168 /* OpenCode */ = {
+				isa = PBXGroup;
+				children = (
+					A10000000000000000000161 /* OpenCodeHookBridge.swift */,
+					A10000000000000000000163 /* OpenCodeHookInstaller.swift */,
+					A10000000000000000000165 /* OpenCodeSQLiteReader.swift */,
+					A10000000000000000000167 /* OpenCodeApprovalExecutor.swift */,
+				);
+				path = OpenCode;
+				sourceTree = "<group>";
+			};
 			A1000000000000000000010D /* Usage */ = {
 				isa = PBXGroup;
 				children = (
@@ -790,6 +810,10 @@
 				A10000000000000000000122 /* CodexSessionReader.swift in Sources */,
 				A10000000000000000000124 /* CodexLogReader.swift in Sources */,
 				A10000000000000000000126 /* CodexHookSource.swift in Sources */,
+				A10000000000000000000160 /* OpenCodeHookBridge.swift in Sources */,
+				A10000000000000000000162 /* OpenCodeHookInstaller.swift in Sources */,
+				A10000000000000000000164 /* OpenCodeSQLiteReader.swift in Sources */,
+				A10000000000000000000166 /* OpenCodeApprovalExecutor.swift in Sources */,
 				A10000000000000000000128 /* DiagnosticsCardView.swift in Sources */,
 				A10000000000000000000130 /* GitHubReleaseAssetDownloader.swift in Sources */,
 				A1000000000000000000012E /* GitHubReleaseUpdateChecker.swift in Sources */,
