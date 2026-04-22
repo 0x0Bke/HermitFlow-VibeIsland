@@ -12,6 +12,11 @@ enum OpenCodeUsageLoader {
     private static let defaultCommandTimeout: TimeInterval = 5
 
     static func load() throws -> OpenCodeUsageSnapshot? {
+        guard isOpenCodeCLIAvailable() else {
+            Logger.log("OpenCode usage skipped because the opencode CLI is not installed.", category: .source)
+            return nil
+        }
+
         try ensureProviderConfigFileExists()
         let config = try loadProviderConfig()
         let context = loadLatestContext()
@@ -1039,6 +1044,89 @@ enum OpenCodeUsageLoader {
             return nil
         }
         return object
+    }
+
+    private static func isOpenCodeCLIAvailable() -> Bool {
+        let fileManager = FileManager.default
+        let homeDirectory = NSHomeDirectory()
+        var candidates = [
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+            "\(homeDirectory)/.bun/bin/opencode",
+            "\(homeDirectory)/.volta/bin/opencode",
+            "\(homeDirectory)/.asdf/shims/opencode",
+            "\(homeDirectory)/.local/bin/opencode",
+            "\(homeDirectory)/.local/share/mise/shims/opencode",
+            "\(homeDirectory)/.mise/shims/opencode"
+        ]
+        candidates.append(contentsOf: executableCandidates(
+            inDirectory: "\(homeDirectory)/.nvm/versions/node",
+            suffix: "bin/opencode"
+        ))
+        candidates.append(contentsOf: executableCandidates(
+            inDirectory: "\(homeDirectory)/.fnm/node-versions",
+            suffix: "installation/bin/opencode"
+        ))
+        candidates.append(contentsOf: executableCandidates(
+            inDirectory: "\(homeDirectory)/.asdf/installs/nodejs",
+            suffix: "bin/opencode"
+        ))
+
+        if candidates.contains(where: { fileManager.isExecutableFile(atPath: $0) }) {
+            return true
+        }
+
+        if let path = runCommandAndCaptureOutput(
+            executablePath: "/usr/bin/which",
+            arguments: ["opencode"]
+        ), fileManager.isExecutableFile(atPath: path) {
+            return true
+        }
+
+        for shellPath in ["/bin/zsh", "/bin/bash"] {
+            if let path = runCommandAndCaptureOutput(
+                executablePath: shellPath,
+                arguments: ["-lic", "command -v opencode"]
+            ), fileManager.isExecutableFile(atPath: path) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func executableCandidates(inDirectory directoryPath: String, suffix: String) -> [String] {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(atPath: directoryPath) else {
+            return []
+        }
+
+        return entries.map { "\(directoryPath)/\($0)/\(suffix)" }
+    }
+
+    private static func runCommandAndCaptureOutput(executablePath: String, arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        return String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func runSQLiteRows(sql: String) -> [String]? {
