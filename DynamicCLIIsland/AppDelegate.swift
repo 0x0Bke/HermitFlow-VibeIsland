@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1)
-        window.hasShadow = true
+        window.hasShadow = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.isMovableByWindowBackground = false
         window.isMovable = false
@@ -168,6 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             },
             onUsageDisplayTypeSelected: { [weak self] option in
                 self?.store.setUsageDisplayType(option)
+            },
+            dotMatrixAnimationEnabled: { [weak self] in
+                self?.store.dotMatrixAnimationEnabled ?? false
+            },
+            onDotMatrixAnimationEnabledChange: { [weak self] isEnabled in
+                self?.store.setDotMatrixAnimationEnabled(isEnabled)
             },
             launchAtLoginEnabled: { [weak self] in
                 self?.loginItemController.isEnabled ?? false
@@ -423,6 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             topInset: topInset
         )
         updatePanelHoverArming(for: targetFrame)
+        window.hasShadow = store.displayMode == .panel
 
         windowSizingCoordinator.applyFrame(targetFrame, to: window, display: true, animation: animation)
     }

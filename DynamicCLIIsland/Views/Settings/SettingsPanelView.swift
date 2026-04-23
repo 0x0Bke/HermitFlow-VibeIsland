@@ -171,6 +171,8 @@ struct SettingsPanelView: View {
     let onAskUserQuestionHandlingModeSelected: (AskUserQuestionHandlingMode) -> Void
     let usageDisplayType: () -> UsageDisplayType
     let onUsageDisplayTypeSelected: (UsageDisplayType) -> Void
+    let dotMatrixAnimationEnabled: () -> Bool
+    let onDotMatrixAnimationEnabledChange: (Bool) -> Void
     let launchAtLoginEnabled: () -> Bool
     let onLaunchAtLoginChange: (Bool) -> Void
     let currentCustomLogoPath: () -> String?
@@ -406,6 +408,16 @@ struct SettingsPanelView: View {
                     }
                 }
             )
+
+            sectionDivider
+
+            fullWidthQuickSettingCell(title: "Animation", systemImage: "circle.grid.3x3") {
+                Toggle("", isOn: dotMatrixAnimationBinding)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .tint(settingsAccent)
+                    .scaleEffect(0.68)
+            }
         }
         .background(sectionSurfaceBackground(cornerRadius: sectionCornerRadius))
         .overlay(
@@ -690,6 +702,15 @@ struct SettingsPanelView: View {
             get: { launchAtLoginEnabled() },
             set: { isEnabled in
                 onLaunchAtLoginChange(isEnabled)
+            }
+        )
+    }
+
+    private var dotMatrixAnimationBinding: Binding<Bool> {
+        Binding(
+            get: { dotMatrixAnimationEnabled() },
+            set: { isEnabled in
+                onDotMatrixAnimationEnabledChange(isEnabled)
             }
         )
     }

@@ -24,6 +24,9 @@ struct LocalCodexSource: @unchecked Sendable {
     private let sessionFileLocator = SessionFileLocator(
         rootURL: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/sessions")
     )
+    private let sqliteReadClient = SQLiteReadClient(cacheTTL: 1.0)
+    private let fileContentCache = FileContentCache()
+    private let derivedCache = LocalCodexDerivedCache()
     private let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -56,7 +59,6 @@ struct LocalCodexSource: @unchecked Sendable {
         }
 
         let threadReferences = fetchRecentThreadReferences(limit: recentThreadLimit)
-        let usageThreadReferences = fetchRecentThreadReferences(limit: usageThreadLimit)
         let threadSnapshots = threadReferences.compactMap(makeThreadSnapshot(from:))
         guard !threadSnapshots.isEmpty else {
             return ActivitySourceSnapshot(
@@ -65,7 +67,7 @@ struct LocalCodexSource: @unchecked Sendable {
                 lastUpdatedAt: .now,
                 errorMessage: nil,
                 approvalRequest: nil,
-                usageSnapshots: fetchUsageSnapshots(threadReferences: usageThreadReferences)
+                usageSnapshots: []
             )
         }
 
@@ -196,7 +198,7 @@ struct LocalCodexSource: @unchecked Sendable {
             lastUpdatedAt: lastUpdatedAt,
             errorMessage: nil,
             approvalRequest: newestApprovalRequest,
-            usageSnapshots: fetchUsageSnapshots(threadReferences: usageThreadReferences)
+            usageSnapshots: []
         )
     }
 
@@ -221,7 +223,6 @@ struct LocalCodexSource: @unchecked Sendable {
         for threadReference in threadReferences {
             let sessionFileURL = fetchSessionFileURL(for: threadReference.threadID)
             let sessionMeta = sessionFileURL.flatMap(fetchSessionMeta(from:))
-            let terminalClient = detectTerminalClient(for: threadReference.threadID)
             let resolvedCWD = resolvedWorkingDirectory(sessionMeta: sessionMeta, fallbackCWD: threadReference.cwd)
             let hasActiveWorkspaceMatch = hasActiveWorkspaceMatch(cwd: resolvedCWD, globalState: globalState)
             let shouldPreferDesktopOrigin = hasActiveWorkspaceMatch && threadReference.threadSource == "vscode"
@@ -230,7 +231,7 @@ struct LocalCodexSource: @unchecked Sendable {
                 sessionMeta: sessionMeta,
                 fallbackSource: threadReference.threadSource,
                 fallbackCWD: resolvedCWD,
-                terminalClient: terminalClient,
+                terminalClient: nil,
                 preferDesktopOrigin: shouldPreferDesktopOrigin
             )
 
@@ -238,11 +239,10 @@ struct LocalCodexSource: @unchecked Sendable {
                 continue
             }
 
-            let conversationSummary = fetchConversationSummary(from: sessionFileURL)
-            let contextTitle = conversationSummary ?? sessionTitle(
+            let contextTitle = sessionTitle(
                 sessionMeta: sessionMeta,
                 fallbackSource: threadReference.threadSource,
-                terminalClient: terminalClient,
+                terminalClient: nil,
                 preferDesktopOrigin: shouldPreferDesktopOrigin
             )
             let approvalProbe = fetchApprovalProbe(
@@ -362,6 +362,19 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func fetchUsageSnapshot(from fileURL: URL) -> LocalCodexUsageSnapshot? {
+        guard let signature = fileContentCache.signature(at: fileURL) else {
+            return nil
+        }
+        if let cachedSnapshot = derivedCache.cachedUsageSnapshot(for: fileURL, signature: signature) {
+            return cachedSnapshot
+        }
+
+        let snapshot = parseUsageSnapshot(from: fileURL)
+        derivedCache.storeUsageSnapshot(snapshot, for: fileURL, signature: signature)
+        return snapshot
+    }
+
+    private func parseUsageSnapshot(from fileURL: URL) -> LocalCodexUsageSnapshot? {
         var latestSnapshot: LocalCodexUsageSnapshot?
 
         for line in readRecentLines(from: fileURL, maxBytes: recentSessionScanBytes).reversed() {
@@ -533,7 +546,7 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func fetchRecentHistoryThreadReferences(limit: Int) -> [RecentThreadReference] {
-        guard let content = try? String(contentsOf: codexHistoryURL, encoding: .utf8) else {
+        guard let content = fileContentCache.string(at: codexHistoryURL) else {
             return []
         }
 
@@ -677,7 +690,7 @@ struct LocalCodexSource: @unchecked Sendable {
 
     private func fetchGlobalState() -> LocalCodexGlobalState? {
         guard
-            let data = try? Data(contentsOf: globalStateURL),
+            let data = fileContentCache.data(at: globalStateURL),
             let state = try? JSONDecoder().decode(LocalCodexGlobalState.self, from: data)
         else {
             return nil
@@ -687,70 +700,32 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func readFirstLine(from fileURL: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            return nil
-        }
-
-        defer {
-            try? handle.close()
-        }
-
-        var data = Data()
-        while let chunk = try? handle.read(upToCount: 4096), !chunk.isEmpty {
-            if let newlineIndex = chunk.firstIndex(of: 0x0A) {
-                data.append(chunk.prefix(upTo: newlineIndex))
-                break
-            }
-
-            data.append(chunk)
-
-            if data.count >= maxSessionMetaLineBytes {
-                break
-            }
-        }
-
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        fileContentCache.firstLine(at: fileURL, maxBytes: maxSessionMetaLineBytes)
     }
 
     private func readRecentLines(from fileURL: URL, maxBytes: Int) -> [Substring] {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            return []
-        }
-
-        defer {
-            try? handle.close()
-        }
-
-        guard let fileSize = try? handle.seekToEnd(), fileSize > 0 else {
-            return []
-        }
-
-        let byteCount = UInt64(max(1, maxBytes))
-        let startOffset = fileSize > byteCount ? fileSize - byteCount : 0
-
-        do {
-            try handle.seek(toOffset: startOffset)
-        } catch {
-            return []
-        }
-
-        guard let data = try? handle.readToEnd(), !data.isEmpty,
-              let text = String(data: data, encoding: .utf8) else {
-            return []
-        }
-
-        let trimmedText: Substring
-        if startOffset > 0, let newlineIndex = text.firstIndex(of: "\n") {
-            trimmedText = text[text.index(after: newlineIndex)...]
-        } else {
-            trimmedText = text[...]
-        }
-
-        return trimmedText.split(separator: "\n", omittingEmptySubsequences: true)
+        fileContentCache.recentText(at: fileURL, maxBytes: maxBytes)?
+            .split(separator: "\n", omittingEmptySubsequences: true) ?? []
     }
 
     private func fetchConversationSummary(from fileURL: URL) -> String? {
+        guard let signature = fileContentCache.signature(at: fileURL) else {
+            return nil
+        }
+
+        if let cachedSummary = derivedCache.cachedConversationSummary(
+            for: fileURL,
+            signature: signature
+        ) {
+            return cachedSummary
+        }
+
+        let summary = parseConversationSummary(from: fileURL)
+        derivedCache.storeConversationSummary(summary, for: fileURL, signature: signature)
+        return summary
+    }
+
+    private func parseConversationSummary(from fileURL: URL) -> String? {
         for line in readRecentLines(from: fileURL, maxBytes: recentSessionScanBytes).reversed() {
             guard let data = String(line).data(using: .utf8),
                   let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -848,28 +823,7 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func runSQLiteQuery(databaseURL: URL, sql: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [databaseURL.path, "-separator", "|", sql]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        sqliteReadClient.query(databaseURL: databaseURL, separator: "|", sql: sql)
     }
 
     private func fetchPendingApproval(
@@ -987,6 +941,19 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func fetchSessionActivityHints(from fileURL: URL) -> LocalCodexSessionActivityHints? {
+        guard let signature = fileContentCache.signature(at: fileURL) else {
+            return nil
+        }
+        if let cachedHints = derivedCache.cachedSessionActivityHints(for: fileURL, signature: signature) {
+            return cachedHints
+        }
+
+        let hints = parseSessionActivityHints(from: fileURL)
+        derivedCache.storeSessionActivityHints(hints, for: fileURL, signature: signature)
+        return hints
+    }
+
+    private func parseSessionActivityHints(from fileURL: URL) -> LocalCodexSessionActivityHints? {
         let recentLines = readRecentLines(from: fileURL, maxBytes: recentSessionScanBytes)
         guard !recentLines.isEmpty else {
             return nil
@@ -1056,7 +1023,7 @@ struct LocalCodexSource: @unchecked Sendable {
             return []
         }
 
-        guard let content = try? String(contentsOf: tuiLogURL, encoding: .utf8) else {
+        guard let content = fileContentCache.string(at: tuiLogURL) else {
             return []
         }
 
@@ -1265,11 +1232,30 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func detectTerminalClient(for threadID: String) -> TerminalClient? {
+        let now = Date()
+        if let cachedClient = derivedCache.cachedTerminalClient(for: threadID, now: now) {
+            return cachedClient
+        }
+
         guard let shellSnapshotURL = latestShellSnapshotURL(for: threadID),
-              let shellSnapshot = try? String(contentsOf: shellSnapshotURL, encoding: .utf8) else {
+              let signature = fileContentCache.signature(at: shellSnapshotURL),
+              let shellSnapshot = fileContentCache.string(at: shellSnapshotURL) else {
+            derivedCache.storeTerminalClient(nil, for: threadID, now: now)
             return nil
         }
 
+        let client = terminalClient(from: shellSnapshot)
+        derivedCache.storeTerminalClient(
+            client,
+            for: threadID,
+            snapshotURL: shellSnapshotURL,
+            signature: signature,
+            now: now
+        )
+        return client
+    }
+
+    private func terminalClient(from shellSnapshot: String) -> TerminalClient? {
         if shellSnapshot.contains("export TERM_PROGRAM=WarpTerminal")
             || shellSnapshot.contains("export WARP_IS_LOCAL_SHELL_SESSION=1") {
             return .warp
@@ -1304,30 +1290,45 @@ struct LocalCodexSource: @unchecked Sendable {
     }
 
     private func latestShellSnapshotURL(for threadID: String) -> URL? {
+        let now = Date()
+        if let cachedURL = derivedCache.cachedShellSnapshotURL(for: threadID, now: now) {
+            return cachedURL
+        }
+
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: shellSnapshotsDirectoryURL,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
+            derivedCache.storeShellSnapshotURL(nil, for: threadID, now: now)
             return nil
         }
 
-        return fileURLs
+        let latestURL = fileURLs
             .filter { $0.lastPathComponent.hasPrefix(threadID + ".") && $0.pathExtension == "sh" }
             .max { lhs, rhs in
                 let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
                 let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
                 return leftDate < rightDate
             }
+        derivedCache.storeShellSnapshotURL(latestURL, for: threadID, now: now)
+        return latestURL
     }
 
     private func latestSQLiteURL(prefix: String, fallbackName: String) -> URL {
         let fallbackURL = codexRootURL.appendingPathComponent(fallbackName)
+        let cacheKey = "\(prefix)|\(fallbackName)"
+        let now = Date()
+        if let cachedURL = derivedCache.cachedSQLiteURL(for: cacheKey, now: now) {
+            return cachedURL
+        }
+
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: codexRootURL,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
+            derivedCache.storeSQLiteURL(fallbackURL, for: cacheKey, now: now)
             return fallbackURL
         }
 
@@ -1337,10 +1338,11 @@ struct LocalCodexSource: @unchecked Sendable {
         }
 
         guard !matchingURLs.isEmpty else {
+            derivedCache.storeSQLiteURL(fallbackURL, for: cacheKey, now: now)
             return fallbackURL
         }
 
-        return matchingURLs.max { lhs, rhs in
+        let resolvedURL = matchingURLs.max { lhs, rhs in
             let leftVersion = sqliteVersion(in: lhs.lastPathComponent, prefix: prefix)
             let rightVersion = sqliteVersion(in: rhs.lastPathComponent, prefix: prefix)
             if leftVersion != rightVersion {
@@ -1351,6 +1353,8 @@ struct LocalCodexSource: @unchecked Sendable {
             let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             return leftDate < rightDate
         } ?? fallbackURL
+        derivedCache.storeSQLiteURL(resolvedURL, for: cacheKey, now: now)
+        return resolvedURL
     }
 
     private func sqliteVersion(in fileName: String, prefix: String) -> Int {
@@ -1493,6 +1497,438 @@ private final class SessionFileLocator: @unchecked Sendable {
         }
 
         return nil
+    }
+}
+
+private final class SQLiteReadClient: @unchecked Sendable {
+    private struct CacheEntry {
+        let output: String?
+        let storedAt: Date
+    }
+
+    private let cacheTTL: TimeInterval
+    private let lock = NSLock()
+    private var cache: [String: CacheEntry] = [:]
+
+    init(cacheTTL: TimeInterval) {
+        self.cacheTTL = cacheTTL
+    }
+
+    func query(databaseURL: URL, separator: String? = nil, sql: String, now: Date = .now) -> String? {
+        let key = "\(databaseURL.path)|\(separator ?? "")|\(sql)"
+        lock.lock()
+        if let entry = cache[key], now.timeIntervalSince(entry.storedAt) < cacheTTL {
+            lock.unlock()
+            return entry.output
+        }
+        lock.unlock()
+
+        let output = runSQLite(databaseURL: databaseURL, separator: separator, sql: sql)
+
+        lock.lock()
+        cache[key] = CacheEntry(output: output, storedAt: now)
+        lock.unlock()
+
+        return output
+    }
+
+    private func runSQLite(databaseURL: URL, separator: String?, sql: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        if let separator {
+            process.arguments = [databaseURL.path, "-separator", separator, sql]
+        } else {
+            process.arguments = ["-readonly", databaseURL.path, sql]
+        }
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        return String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private final class LocalCodexDerivedCache: @unchecked Sendable {
+    private struct ConversationSummaryEntry {
+        let signature: FileContentSignature
+        let summary: String?
+    }
+
+    private struct SessionActivityHintsEntry {
+        let signature: FileContentSignature
+        let hints: LocalCodexSessionActivityHints?
+    }
+
+    private struct UsageSnapshotEntry {
+        let signature: FileContentSignature
+        let snapshot: LocalCodexUsageSnapshot?
+    }
+
+    private struct TerminalClientEntry {
+        let client: TerminalClient?
+        let storedAt: Date
+        let snapshotURL: URL?
+        let signature: FileContentSignature?
+    }
+
+    private struct ShellSnapshotURLEntry {
+        let url: URL?
+        let storedAt: Date
+    }
+
+    private struct SQLiteURLEntry {
+        let url: URL
+        let storedAt: Date
+    }
+
+    private let lock = NSLock()
+    private let terminalClientTTL: TimeInterval = 15
+    private let shellSnapshotURLTTL: TimeInterval = 5
+    private let sqliteURLTTL: TimeInterval = 10
+    private var conversationSummaryByPath: [String: ConversationSummaryEntry] = [:]
+    private var sessionActivityHintsByPath: [String: SessionActivityHintsEntry] = [:]
+    private var usageSnapshotByPath: [String: UsageSnapshotEntry] = [:]
+    private var terminalClientByThreadID: [String: TerminalClientEntry] = [:]
+    private var shellSnapshotURLByThreadID: [String: ShellSnapshotURLEntry] = [:]
+    private var sqliteURLByKey: [String: SQLiteURLEntry] = [:]
+
+    func cachedConversationSummary(
+        for url: URL,
+        signature: FileContentSignature
+    ) -> String?? {
+        lock.lock()
+        let entry = conversationSummaryByPath[url.path]
+        lock.unlock()
+
+        guard let entry, entry.signature == signature else {
+            return nil
+        }
+        return .some(entry.summary)
+    }
+
+    func storeConversationSummary(
+        _ summary: String?,
+        for url: URL,
+        signature: FileContentSignature
+    ) {
+        lock.lock()
+        conversationSummaryByPath[url.path] = ConversationSummaryEntry(
+            signature: signature,
+            summary: summary
+        )
+        lock.unlock()
+    }
+
+    func cachedSessionActivityHints(
+        for url: URL,
+        signature: FileContentSignature
+    ) -> LocalCodexSessionActivityHints?? {
+        lock.lock()
+        let entry = sessionActivityHintsByPath[url.path]
+        lock.unlock()
+
+        guard let entry, entry.signature == signature else {
+            return nil
+        }
+        return .some(entry.hints)
+    }
+
+    func storeSessionActivityHints(
+        _ hints: LocalCodexSessionActivityHints?,
+        for url: URL,
+        signature: FileContentSignature
+    ) {
+        lock.lock()
+        sessionActivityHintsByPath[url.path] = SessionActivityHintsEntry(
+            signature: signature,
+            hints: hints
+        )
+        lock.unlock()
+    }
+
+    func cachedUsageSnapshot(
+        for url: URL,
+        signature: FileContentSignature
+    ) -> LocalCodexUsageSnapshot?? {
+        lock.lock()
+        let entry = usageSnapshotByPath[url.path]
+        lock.unlock()
+
+        guard let entry, entry.signature == signature else {
+            return nil
+        }
+        return .some(entry.snapshot)
+    }
+
+    func storeUsageSnapshot(
+        _ snapshot: LocalCodexUsageSnapshot?,
+        for url: URL,
+        signature: FileContentSignature
+    ) {
+        lock.lock()
+        usageSnapshotByPath[url.path] = UsageSnapshotEntry(
+            signature: signature,
+            snapshot: snapshot
+        )
+        lock.unlock()
+    }
+
+    func cachedTerminalClient(for threadID: String, now: Date) -> TerminalClient?? {
+        lock.lock()
+        let entry = terminalClientByThreadID[threadID]
+        lock.unlock()
+
+        guard let entry, now.timeIntervalSince(entry.storedAt) < terminalClientTTL else {
+            return nil
+        }
+        return .some(entry.client)
+    }
+
+    func storeTerminalClient(
+        _ client: TerminalClient?,
+        for threadID: String,
+        snapshotURL: URL? = nil,
+        signature: FileContentSignature? = nil,
+        now: Date
+    ) {
+        lock.lock()
+        terminalClientByThreadID[threadID] = TerminalClientEntry(
+            client: client,
+            storedAt: now,
+            snapshotURL: snapshotURL,
+            signature: signature
+        )
+        lock.unlock()
+    }
+
+    func cachedShellSnapshotURL(for threadID: String, now: Date) -> URL?? {
+        lock.lock()
+        let entry = shellSnapshotURLByThreadID[threadID]
+        lock.unlock()
+
+        guard let entry, now.timeIntervalSince(entry.storedAt) < shellSnapshotURLTTL else {
+            return nil
+        }
+        return .some(entry.url)
+    }
+
+    func storeShellSnapshotURL(_ url: URL?, for threadID: String, now: Date) {
+        lock.lock()
+        shellSnapshotURLByThreadID[threadID] = ShellSnapshotURLEntry(url: url, storedAt: now)
+        lock.unlock()
+    }
+
+    func cachedSQLiteURL(for key: String, now: Date) -> URL? {
+        lock.lock()
+        let entry = sqliteURLByKey[key]
+        lock.unlock()
+
+        guard let entry, now.timeIntervalSince(entry.storedAt) < sqliteURLTTL else {
+            return nil
+        }
+        return entry.url
+    }
+
+    func storeSQLiteURL(_ url: URL, for key: String, now: Date) {
+        lock.lock()
+        sqliteURLByKey[key] = SQLiteURLEntry(url: url, storedAt: now)
+        lock.unlock()
+    }
+}
+
+struct LocalCodexDerivedCacheProbe {
+    private let cache = LocalCodexDerivedCache()
+
+    func cachedConversationSummary(for url: URL, signature: FileContentSignature) -> String?? {
+        cache.cachedConversationSummary(for: url, signature: signature)
+    }
+
+    func storeConversationSummary(_ summary: String?, for url: URL, signature: FileContentSignature) {
+        cache.storeConversationSummary(summary, for: url, signature: signature)
+    }
+
+    func cachedShellSnapshotURL(for threadID: String, now: Date) -> URL?? {
+        cache.cachedShellSnapshotURL(for: threadID, now: now)
+    }
+
+    func storeShellSnapshotURL(_ url: URL?, for threadID: String, now: Date) {
+        cache.storeShellSnapshotURL(url, for: threadID, now: now)
+    }
+}
+
+struct FileContentSignature: Equatable {
+    let size: UInt64
+    let modifiedAt: Date?
+}
+
+final class FileContentCache: @unchecked Sendable {
+    private struct CacheEntry {
+        let data: Data
+        let size: UInt64
+        let modifiedAt: Date?
+    }
+
+    private let lock = NSLock()
+    private var cache: [String: CacheEntry] = [:]
+
+    func data(at url: URL) -> Data? {
+        if let cached = cachedEntry(for: url) {
+            return cached.data
+        }
+
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        store(data: data, for: url)
+        return data
+    }
+
+    func string(at url: URL) -> String? {
+        data(at: url).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    func firstLine(at url: URL, maxBytes: Int) -> String? {
+        let data: Data
+        if let cached = cachedEntry(for: url) {
+            data = cached.data
+        } else {
+            data = readPrefix(at: url, maxBytes: maxBytes) ?? Data()
+            guard !data.isEmpty else {
+                return nil
+            }
+            store(data: data, for: url)
+        }
+
+        let firstLineData: Data
+        if let newlineIndex = data.firstIndex(of: 0x0A) {
+            firstLineData = Data(data.prefix(upTo: newlineIndex))
+        } else {
+            firstLineData = data
+        }
+        return String(data: firstLineData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func recentText(at url: URL, maxBytes: Int) -> String? {
+        guard let metadata = metadata(for: url), metadata.size > 0 else {
+            return nil
+        }
+
+        let key = cacheKey(for: url, suffix: "tail:\(maxBytes)")
+        lock.lock()
+        if let entry = cache[key], entry.size == metadata.size, entry.modifiedAt == metadata.modifiedAt {
+            lock.unlock()
+            return String(data: entry.data, encoding: .utf8)
+        }
+        lock.unlock()
+
+        guard let data = readSuffix(at: url, fileSize: metadata.size, maxBytes: maxBytes),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        let trimmedText: Substring
+        if metadata.size > UInt64(max(1, maxBytes)), let newlineIndex = text.firstIndex(of: "\n") {
+            trimmedText = text[text.index(after: newlineIndex)...]
+        } else {
+            trimmedText = text[...]
+        }
+
+        let trimmedData = String(trimmedText).data(using: .utf8) ?? Data()
+        lock.lock()
+        cache[key] = CacheEntry(data: trimmedData, size: metadata.size, modifiedAt: metadata.modifiedAt)
+        lock.unlock()
+        return String(data: trimmedData, encoding: .utf8)
+    }
+
+    func signature(at url: URL) -> FileContentSignature? {
+        guard let metadata = metadata(for: url) else {
+            return nil
+        }
+        return FileContentSignature(size: metadata.size, modifiedAt: metadata.modifiedAt)
+    }
+
+    private func cachedEntry(for url: URL) -> CacheEntry? {
+        guard let metadata = metadata(for: url) else {
+            return nil
+        }
+
+        let key = cacheKey(for: url)
+        lock.lock()
+        let entry = cache[key]
+        lock.unlock()
+
+        guard let entry, entry.size == metadata.size, entry.modifiedAt == metadata.modifiedAt else {
+            return nil
+        }
+        return entry
+    }
+
+    private func store(data: Data, for url: URL) {
+        guard let metadata = metadata(for: url) else {
+            return
+        }
+
+        lock.lock()
+        cache[cacheKey(for: url)] = CacheEntry(data: data, size: metadata.size, modifiedAt: metadata.modifiedAt)
+        lock.unlock()
+    }
+
+    private func readPrefix(at url: URL, maxBytes: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: max(1, maxBytes))
+    }
+
+    private func readSuffix(at url: URL, fileSize: UInt64, maxBytes: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let byteCount = UInt64(max(1, maxBytes))
+        let startOffset = fileSize > byteCount ? fileSize - byteCount : 0
+        do {
+            try handle.seek(toOffset: startOffset)
+            return try handle.readToEnd()
+        } catch {
+            return nil
+        }
+    }
+
+    private func metadata(for url: URL) -> (size: UInt64, modifiedAt: Date?)? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+
+        let size: UInt64
+        if let number = attributes[.size] as? NSNumber {
+            size = number.uint64Value
+        } else if let value = attributes[.size] as? UInt64 {
+            size = value
+        } else {
+            size = 0
+        }
+        return (size, attributes[.modificationDate] as? Date)
+    }
+
+    private func cacheKey(for url: URL, suffix: String = "full") -> String {
+        "\(url.path)|\(suffix)"
     }
 }
 
@@ -1655,6 +2091,10 @@ final class LocalClaudeSource: @unchecked Sendable {
         bridge.start()
     }
 
+    func setActivityChangeHandler(_ handler: (@Sendable () -> Void)?) {
+        bridge.setActivityChangeHandler(handler)
+    }
+
     func installHooks() throws {
         bridge.start()
         try bridge.installHooks()
@@ -1703,9 +2143,12 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private let claudeDebugLogURL = FilePaths.claudeDebugLog
     private let recentHistoryScanBytes = 512 * 1024
     private let recentClaudeProjectFileLimit = 20
+    private let claudeProjectCacheTTL: TimeInterval = 5
+    private let claudeDebugLogMaximumBytes: UInt64 = 256 * 1024
     private let interruptionOverrideWindow: TimeInterval = 10
     private let stalledPromptFallbackWindow: TimeInterval = 3
     private let claudePromptRunningWindow: TimeInterval = 15
+    private let fileContentCache = FileContentCache()
     private let historyTimestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1720,6 +2163,13 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     private var questions: [String: ClaudePendingQuestion] = [:]
     private var questionOrder: [String] = []
     private var lastErrorMessage: String?
+    private var candidateFileCache: [String: TimedClaudeCacheEntry<[URL]>] = [:]
+    private var projectStateCache: [String: ClaudeFilesStateCacheEntry<ClaudeProjectDerivedState?>] = [:]
+    private var interruptionCache: [String: ClaudeFilesStateCacheEntry<ClaudeProjectDerivedState?>] = [:]
+    private var claudeProjectScanCount = 0
+    private var claudeProjectCacheHitCount = 0
+    private var lastClaudeProjectCounterLogAt = Date()
+    private var onActivityChange: (@Sendable () -> Void)?
 
     func start() {
         queue.sync {
@@ -1743,6 +2193,12 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 lastErrorMessage = "Claude hook listener unavailable"
                 listenerReady = false
             }
+        }
+    }
+
+    func setActivityChangeHandler(_ handler: (@Sendable () -> Void)?) {
+        queue.sync {
+            onActivityChange = handler
         }
     }
 
@@ -1795,6 +2251,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         queue.sync {
             cleanupExpiredState(now: .now)
             let sessions = makeSnapshots()
+            logClaudeProjectCountersIfNeeded()
             let lastUpdatedAt = sessions.map(\.updatedAt).max() ?? .now
             let statusMessage: String
             if sessions.isEmpty {
@@ -2058,6 +2515,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             lastErrorMessage = nil
         }
 
+        notifyActivityChanged()
         sendHTTPResponse(status: 200, body: "ok", contentType: "text/plain", on: connection)
     }
 
@@ -2118,6 +2576,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 lastActivityAt: .now
             )
         }
+        notifyActivityChanged()
     }
 
     private func handleQuestion(body: Data, on connection: NWConnection) {
@@ -2154,6 +2613,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 lastActivityAt: .now
             )
         }
+        notifyActivityChanged()
     }
 
     private func handleAskUserQuestion(body: Data, on connection: NWConnection) {
@@ -2210,6 +2670,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                 lastActivityAt: .now
             )
         }
+        notifyActivityChanged()
 
         if askUserQuestionHandlingMode() == .mirror {
             sendHTTPResponse(
@@ -2245,6 +2706,13 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             questionOrder.removeAll { resolvedQuestionIDs.contains($0) }
             persistLatestQuestionPromptLocked()
         }
+    }
+
+    private func notifyActivityChanged() {
+        let handler = queue.sync {
+            onActivityChange
+        }
+        handler?()
     }
 
     private func clearApprovals(forSessionID sessionID: String) {
@@ -2707,6 +3175,13 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             return nil
         }
 
+        let cacheKey = "project-state|\(sessionID)|\(cwd)"
+        let signatures = fileSignatures(for: candidateFiles)
+        if let cached = projectStateCache[cacheKey], cached.signatures == signatures {
+            claudeProjectCacheHitCount += 1
+            return cached.value
+        }
+
         var bestState: ClaudeProjectDerivedState?
 
         for sessionFileURL in candidateFiles {
@@ -2726,10 +3201,23 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             }
         }
 
+        projectStateCache[cacheKey] = ClaudeFilesStateCacheEntry(
+            value: bestState,
+            signatures: signatures
+        )
         return bestState
     }
 
     private func fetchClaudeProjectDerivedState(from sessionFileURL: URL, expectedSessionID: String) -> ClaudeProjectDerivedState? {
+        let cacheKey = "project-file|\(expectedSessionID)|\(sessionFileURL.standardizedFileURL.path)"
+        if let signature = fileSignature(for: sessionFileURL),
+           let cached = projectStateCache[cacheKey],
+           cached.signatures == [signature] {
+            claudeProjectCacheHitCount += 1
+            return cached.value
+        }
+
+        var resolvedState: ClaudeProjectDerivedState?
         for line in readRecentLines(from: sessionFileURL, maxBytes: recentHistoryScanBytes).reversed() {
             guard let data = String(line).data(using: .utf8),
                   let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2752,7 +3240,9 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                let operation = record["operation"] as? String {
                 switch operation {
                 case "enqueue", "dequeue":
-                    return ClaudeProjectDerivedState(status: .running, lastEvent: operation, at: timestamp)
+                    resolvedState = ClaudeProjectDerivedState(status: .running, lastEvent: operation, at: timestamp)
+                    cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                    return resolvedState
                 default:
                     break
                 }
@@ -2761,27 +3251,37 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             if type == "assistant",
                let message = record["message"] as? [String: Any] {
                 if assistantMessageContainsThinkingBlock(message) {
-                    return ClaudeProjectDerivedState(status: .running, lastEvent: "assistant_thinking", at: timestamp)
+                    resolvedState = ClaudeProjectDerivedState(status: .running, lastEvent: "assistant_thinking", at: timestamp)
+                    cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                    return resolvedState
                 }
 
                 let stopReason = message["stop_reason"] as? String
                 if stopReason == "tool_use" {
-                    return ClaudeProjectDerivedState(status: .running, lastEvent: "tool_use", at: timestamp)
+                    resolvedState = ClaudeProjectDerivedState(status: .running, lastEvent: "tool_use", at: timestamp)
+                    cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                    return resolvedState
                 }
 
                 if stopReason == "end_turn" {
-                    return ClaudeProjectDerivedState(status: .success, lastEvent: "end_turn", at: timestamp)
+                    resolvedState = ClaudeProjectDerivedState(status: .success, lastEvent: "end_turn", at: timestamp)
+                    cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                    return resolvedState
                 }
 
                 if stopReason == nil {
-                    return ClaudeProjectDerivedState(status: .running, lastEvent: "assistant_thinking", at: timestamp)
+                    resolvedState = ClaudeProjectDerivedState(status: .running, lastEvent: "assistant_thinking", at: timestamp)
+                    cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                    return resolvedState
                 }
             }
 
             if type == "system",
                let subtype = record["subtype"] as? String,
                subtype == "api_error" {
-                return ClaudeProjectDerivedState(status: .failure, lastEvent: "api_error", at: timestamp)
+                resolvedState = ClaudeProjectDerivedState(status: .failure, lastEvent: "api_error", at: timestamp)
+                cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                return resolvedState
             }
 
             if type == "user",
@@ -2806,15 +3306,31 @@ private final class ClaudeHookBridge: @unchecked Sendable {
                     }
 
                     if interrupted {
-                        return ClaudeProjectDerivedState(status: .idle, lastEvent: "interrupted", at: timestamp)
+                        resolvedState = ClaudeProjectDerivedState(status: .idle, lastEvent: "interrupted", at: timestamp)
+                        cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                        return resolvedState
                     }
                 }
 
-                return ClaudeProjectDerivedState(status: .idle, lastEvent: "user_prompt", at: timestamp)
+                resolvedState = ClaudeProjectDerivedState(status: .idle, lastEvent: "user_prompt", at: timestamp)
+                cacheClaudeProjectState(resolvedState, key: cacheKey, fileURL: sessionFileURL)
+                return resolvedState
             }
         }
 
+        cacheClaudeProjectState(nil, key: cacheKey, fileURL: sessionFileURL)
         return nil
+    }
+
+    private func cacheClaudeProjectState(
+        _ state: ClaudeProjectDerivedState?,
+        key: String,
+        fileURL: URL
+    ) {
+        guard let signature = fileSignature(for: fileURL) else {
+            return
+        }
+        projectStateCache[key] = ClaudeFilesStateCacheEntry(value: state, signatures: [signature])
     }
 
     private func assistantMessageContainsThinkingBlock(_ message: [String: Any]) -> Bool {
@@ -2829,12 +3345,18 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
     private func fetchLatestClaudeInterruption(for sessionID: String, cwd: String) -> ClaudeProjectDerivedState? {
         let candidateFiles = candidateClaudeProjectSessionFiles(for: sessionID, cwd: cwd)
-        let candidatePaths = candidateFiles.map(\.path).joined(separator: " | ")
         writeClaudeDebugLog(
-            "interrupt-scan session=\(sessionID) cwd=\(cwd) candidates=\(candidatePaths)"
+            "interrupt-scan session=\(sessionID) cwd=\(cwd) candidateCount=\(candidateFiles.count)"
         )
         guard !candidateFiles.isEmpty else {
             return nil
+        }
+
+        let cacheKey = "interruption|\(sessionID)|\(cwd)"
+        let signatures = fileSignatures(for: candidateFiles)
+        if let cached = interruptionCache[cacheKey], cached.signatures == signatures {
+            claudeProjectCacheHitCount += 1
+            return cached.value
         }
 
         var latestInterruption: ClaudeProjectDerivedState?
@@ -2902,6 +3424,10 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             }
         }
 
+        interruptionCache[cacheKey] = ClaudeFilesStateCacheEntry(
+            value: latestInterruption,
+            signatures: signatures
+        )
         return latestInterruption
     }
 
@@ -2929,6 +3455,14 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     }
 
     private func candidateClaudeProjectSessionFiles(for sessionID: String, cwd: String) -> [URL] {
+        let cacheKey = "candidates|\(sessionID)|\(cwd)"
+        let now = Date()
+        if let cached = candidateFileCache[cacheKey], cached.expiresAt > now {
+            claudeProjectCacheHitCount += 1
+            return cached.value
+        }
+
+        claudeProjectScanCount += 1
         var candidates: [URL] = []
 
         if !sessionID.isEmpty,
@@ -2945,7 +3479,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         candidates.append(contentsOf: locateLatestClaudeProjectSessionFilesGlobally(limit: recentClaudeProjectFileLimit))
 
         var seenPaths = Set<String>()
-        return candidates.filter { url in
+        let filteredCandidates = candidates.filter { url in
             let path = url.standardizedFileURL.path
             guard !path.isEmpty, !seenPaths.contains(path) else {
                 return false
@@ -2953,6 +3487,12 @@ private final class ClaudeHookBridge: @unchecked Sendable {
             seenPaths.insert(path)
             return true
         }
+
+        candidateFileCache[cacheKey] = TimedClaudeCacheEntry(
+            value: filteredCandidates,
+            expiresAt: now.addingTimeInterval(claudeProjectCacheTTL)
+        )
+        return filteredCandidates
     }
 
     private func locateClaudeProjectSessionFile(for sessionID: String, cwd: String) -> URL? {
@@ -3319,7 +3859,7 @@ private final class ClaudeHookBridge: @unchecked Sendable {
 
             for fileURL in fileURLs {
                 guard fileURL.pathExtension == "json",
-                      let data = try? Data(contentsOf: fileURL),
+                      let data = fileContentCache.data(at: fileURL),
                       let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data) else {
                     continue
                 }
@@ -3370,8 +3910,19 @@ private final class ClaudeHookBridge: @unchecked Sendable {
     }
 
     private func writeClaudeDebugLog(_ message: String) {
+        guard isClaudeDebugLogEnabled else {
+            return
+        }
+
         let line = "[\(Date().timeIntervalSince1970)] \(message)\n"
         guard let data = line.data(using: .utf8) else {
+            return
+        }
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: claudeDebugLogURL.path),
+           let size = attributes[.size] as? NSNumber,
+           size.uint64Value > claudeDebugLogMaximumBytes {
+            try? data.write(to: claudeDebugLogURL, options: .atomic)
             return
         }
 
@@ -3392,39 +3943,47 @@ private final class ClaudeHookBridge: @unchecked Sendable {
         try? handle.write(contentsOf: data)
     }
 
+    private var isClaudeDebugLogEnabled: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["HERMITFLOW_DISABLE_CLAUDE_DEBUG_LOG"] != "1"
+        #else
+        return ProcessInfo.processInfo.environment["HERMITFLOW_CLAUDE_DEBUG_LOG"] == "1"
+        #endif
+    }
+
     private func readRecentLines(from fileURL: URL, maxBytes: Int) -> [Substring] {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-              let fileSize = attributes[.size] as? NSNumber,
-              let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            return []
+        fileContentCache.recentText(at: fileURL, maxBytes: maxBytes)?
+            .split(separator: "\n", omittingEmptySubsequences: true) ?? []
+    }
+
+    private func fileSignatures(for urls: [URL]) -> [ClaudeFileSignature] {
+        urls.compactMap(fileSignature(for:))
+    }
+
+    private func fileSignature(for url: URL) -> ClaudeFileSignature? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
         }
 
-        defer {
-            try? handle.close()
+        return ClaudeFileSignature(
+            path: url.standardizedFileURL.path,
+            size: (attributes[.size] as? NSNumber)?.uint64Value,
+            modifiedAt: attributes[.modificationDate] as? Date
+        )
+    }
+
+    private func logClaudeProjectCountersIfNeeded(now: Date = .now) {
+        guard now.timeIntervalSince(lastClaudeProjectCounterLogAt) >= 60 else {
+            return
         }
 
-        let byteCount = UInt64(max(1, maxBytes))
-        let startOffset = fileSize.uint64Value > byteCount ? fileSize.uint64Value - byteCount : 0
-
-        do {
-            try handle.seek(toOffset: startOffset)
-        } catch {
-            return []
-        }
-
-        guard let data = try? handle.readToEnd(), !data.isEmpty,
-              let text = String(data: data, encoding: .utf8) else {
-            return []
-        }
-
-        let trimmedText: Substring
-        if startOffset > 0, let newlineIndex = text.firstIndex(of: "\n") {
-            trimmedText = text[text.index(after: newlineIndex)...]
-        } else {
-            trimmedText = text[...]
-        }
-
-        return trimmedText.split(separator: "\n", omittingEmptySubsequences: true)
+        Logger.log(
+            "Claude project counters/min scans=\(claudeProjectScanCount) cacheHits=\(claudeProjectCacheHitCount).",
+            category: .source
+        )
+        claudeProjectScanCount = 0
+        claudeProjectCacheHitCount = 0
+        lastClaudeProjectCounterLogAt = now
     }
 
     private func summarizeConversationText(_ text: String) -> String? {
@@ -4863,6 +5422,22 @@ private enum ClaudeHookConfigurationError: LocalizedError {
             return reasons.joined(separator: "; ")
         }
     }
+}
+
+private struct TimedClaudeCacheEntry<Value> {
+    let value: Value
+    let expiresAt: Date
+}
+
+private struct ClaudeFileSignature: Equatable {
+    let path: String
+    let size: UInt64?
+    let modifiedAt: Date?
+}
+
+private struct ClaudeFilesStateCacheEntry<Value> {
+    let value: Value
+    let signatures: [ClaudeFileSignature]
 }
 
 private struct ClaudeProjectDerivedState {

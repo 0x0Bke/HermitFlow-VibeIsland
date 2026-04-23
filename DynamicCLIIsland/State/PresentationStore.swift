@@ -129,6 +129,7 @@ final class PresentationStore: ObservableObject {
     @Published private(set) var customCompletionNotificationSoundPath: String?
     @Published private(set) var approvalDefaultFocus: ApprovalDefaultFocusOption
     @Published private(set) var usageDisplayType: UsageDisplayType
+    @Published private(set) var dotMatrixAnimationEnabled: Bool
 
     private let compactHeightOverscan: CGFloat = 2.5
     private let inlineApprovalMinimumHeight: CGFloat = 300
@@ -149,6 +150,7 @@ final class PresentationStore: ObservableObject {
     private let soundMutedDefaultsKey = "HermitFlow.soundMuted"
     private let approvalDefaultFocusDefaultsKey = "HermitFlow.approvalDefaultFocus"
     private let usageDisplayTypeDefaultsKey = "HermitFlow.usageDisplayType"
+    private let dotMatrixAnimationEnabledDefaultsKey = "HermitFlow.dotMatrixAnimationEnabled"
 
     // TODO: These timing fields are still coupled to legacy AppDelegate behaviors.
     private var hasHoveredInsidePanelSinceShown = false
@@ -185,6 +187,7 @@ final class PresentationStore: ObservableObject {
         approvalDefaultFocus = ApprovalDefaultFocusOption(rawValue: storedApprovalDefaultFocus ?? "") ?? .accept
         let storedUsageDisplayType = UserDefaults.standard.string(forKey: usageDisplayTypeDefaultsKey)
         usageDisplayType = UsageDisplayType(rawValue: storedUsageDisplayType ?? "") ?? .remaining
+        dotMatrixAnimationEnabled = UserDefaults.standard.bool(forKey: dotMatrixAnimationEnabledDefaultsKey)
     }
 
     var windowSize: CGSize {
@@ -608,6 +611,15 @@ final class PresentationStore: ObservableObject {
 
         usageDisplayType = type
         UserDefaults.standard.set(type.rawValue, forKey: usageDisplayTypeDefaultsKey)
+    }
+
+    func setDotMatrixAnimationEnabled(_ enabled: Bool) {
+        guard dotMatrixAnimationEnabled != enabled else {
+            return
+        }
+
+        dotMatrixAnimationEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: dotMatrixAnimationEnabledDefaultsKey)
     }
 
     func syncRuntimeContext(

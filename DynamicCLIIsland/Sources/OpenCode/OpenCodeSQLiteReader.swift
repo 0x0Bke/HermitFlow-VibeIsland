@@ -13,6 +13,7 @@ struct OpenCodeSQLiteReader: @unchecked Sendable {
     private let recentSessionLimit: Int
     private let sessionLookback: TimeInterval
     private let freshSuccessWindow: TimeInterval
+    private let sqliteReadClient = OpenCodeSQLiteReadClient(cacheTTL: 1.0)
 
     init(
         fileManager: FileManager = .default,
@@ -176,27 +177,7 @@ struct OpenCodeSQLiteReader: @unchecked Sendable {
     }
 
     private func runSQLiteRows(sql: String) -> [String]? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = ["-readonly", databaseURL.path, sql]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = sqliteReadClient.query(databaseURL: databaseURL, sql: sql)
         let rows = output?
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init) ?? []
@@ -244,5 +225,62 @@ struct OpenCodeSQLiteReader: @unchecked Sendable {
         }
 
         return current
+    }
+}
+
+private final class OpenCodeSQLiteReadClient: @unchecked Sendable {
+    private struct CacheEntry {
+        let output: String?
+        let storedAt: Date
+    }
+
+    private let cacheTTL: TimeInterval
+    private let lock = NSLock()
+    private var cache: [String: CacheEntry] = [:]
+
+    init(cacheTTL: TimeInterval) {
+        self.cacheTTL = cacheTTL
+    }
+
+    func query(databaseURL: URL, sql: String, now: Date = .now) -> String? {
+        let key = "\(databaseURL.path)|\(sql)"
+        lock.lock()
+        if let entry = cache[key], now.timeIntervalSince(entry.storedAt) < cacheTTL {
+            lock.unlock()
+            return entry.output
+        }
+        lock.unlock()
+
+        let output = runSQLite(databaseURL: databaseURL, sql: sql)
+
+        lock.lock()
+        cache[key] = CacheEntry(output: output, storedAt: now)
+        lock.unlock()
+
+        return output
+    }
+
+    private func runSQLite(databaseURL: URL, sql: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-readonly", databaseURL.path, sql]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        return String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -15,7 +15,6 @@ struct DotMatrixSineWaveStatusGlyph: View {
     private let restingColor = Color(.sRGB, red: 29 / 255, green: 29 / 255, blue: 29 / 255, opacity: 0.6)
     private let secondaryColor = (red: 0.0, green: 184.0 / 255.0, blue: 212.0 / 255.0)
     private let activeColor = (red: 0.0, green: 229.0 / 255.0, blue: 1.0)
-    private let glowColor = Color(.sRGB, red: 24 / 255, green: 1.0, blue: 1.0, opacity: 1)
 
     private let pulsesByDot: [[Pulse]] = [
         [Pulse(peak: 0.54, riseDuration: 0.10, fallDuration: 0.30)],
@@ -41,7 +40,7 @@ struct DotMatrixSineWaveStatusGlyph: View {
     var body: some View {
         Group {
             if isAnimating {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 18.0, paused: false)) { timeline in
                     glyphBody(at: normalizedPhase(for: timeline.date))
                 }
             } else {
@@ -63,12 +62,10 @@ struct DotMatrixSineWaveStatusGlyph: View {
                             .fill(dotFill(intensity: intensity))
                             .frame(width: dotSize, height: dotSize)
                             .scaleEffect(1 + intensity * 0.075)
-                            .shadow(color: glowColor.opacity(intensity * 0.44), radius: 1.0 + intensity * 2.25)
                     }
                 }
             }
         }
-        .drawingGroup(opaque: false, colorMode: .linear)
     }
 
     private func normalizedPhase(for date: Date) -> Double {

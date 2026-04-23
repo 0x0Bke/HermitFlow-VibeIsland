@@ -25,6 +25,10 @@ struct LocalOpenCodeSource: ActivitySource, @unchecked Sendable {
         bridge.start()
     }
 
+    func setActivityChangeHandler(_ handler: (@Sendable () -> Void)?) {
+        bridge.setActivityChangeHandler(handler)
+    }
+
     func fetchActivity() -> ActivitySourceSnapshot {
         let liveSnapshot = bridge.activitySnapshot()
         let fallbackSnapshot = sqliteReader.fetchActivity()
@@ -197,6 +201,7 @@ final class OpenCodeHookBridge: @unchecked Sendable {
     private var debugEvents: [OpenCodePluginDebugEvent] = []
     private var recentEvents: [OpenCodeEventDiagnostic] = []
     private var serverBaseURL: URL?
+    private var onActivityChange: (@Sendable () -> Void)?
 
     private init() {}
 
@@ -221,6 +226,12 @@ final class OpenCodeHookBridge: @unchecked Sendable {
                 listenerReady = false
                 listener = nil
             }
+        }
+    }
+
+    func setActivityChangeHandler(_ handler: (@Sendable () -> Void)?) {
+        queue.sync {
+            onActivityChange = handler
         }
     }
 
@@ -389,7 +400,15 @@ final class OpenCodeHookBridge: @unchecked Sendable {
             }
         }
 
+        notifyActivityChanged()
         return .succeeded
+    }
+
+    private func notifyActivityChanged() {
+        let handler = queue.sync {
+            onActivityChange
+        }
+        handler?()
     }
 
     private func handleListenerState(_ state: NWListener.State) {
@@ -549,6 +568,7 @@ final class OpenCodeHookBridge: @unchecked Sendable {
             apply(payload: payload, now: .now)
         }
 
+        notifyActivityChanged()
         sendJSON(["ok": true], on: connection)
     }
 

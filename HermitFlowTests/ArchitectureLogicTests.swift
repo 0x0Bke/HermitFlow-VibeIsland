@@ -3,10 +3,36 @@ import XCTest
 @testable import HermitFlow
 
 final class ArchitectureLogicTests: XCTestCase {
+    private let dotMatrixAnimationDefaultsKey = "HermitFlow.dotMatrixAnimationEnabled"
+
     func testVersionCompareHandlesTagsMissingPatchAndPreReleaseSuffixes() {
         XCTAssertEqual(GitHubReleaseUpdateChecker.compareVersions("v1.2.10", "1.2.9"), .orderedDescending)
         XCTAssertEqual(GitHubReleaseUpdateChecker.compareVersions("1.2", "1.2.0"), .orderedSame)
         XCTAssertEqual(GitHubReleaseUpdateChecker.compareVersions("1.2.0-beta", "1.2.1"), .orderedAscending)
+    }
+
+    @MainActor
+    func testDotMatrixAnimationPreferenceDefaultsPersistsAndRestores() {
+        let defaults = UserDefaults.standard
+        let originalValue = defaults.object(forKey: dotMatrixAnimationDefaultsKey)
+        defaults.removeObject(forKey: dotMatrixAnimationDefaultsKey)
+        defer {
+            if let originalValue {
+                defaults.set(originalValue, forKey: dotMatrixAnimationDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: dotMatrixAnimationDefaultsKey)
+            }
+        }
+
+        let defaultStore = PresentationStore()
+        XCTAssertFalse(defaultStore.dotMatrixAnimationEnabled)
+
+        defaultStore.setDotMatrixAnimationEnabled(true)
+        XCTAssertTrue(defaultStore.dotMatrixAnimationEnabled)
+        XCTAssertTrue(defaults.bool(forKey: dotMatrixAnimationDefaultsKey))
+
+        let restoredStore = PresentationStore()
+        XCTAssertTrue(restoredStore.dotMatrixAnimationEnabled)
     }
 
     @MainActor
@@ -42,6 +68,123 @@ final class ArchitectureLogicTests: XCTestCase {
         XCTAssertEqual(ApprovalRequestMerger.merge(older, newer)?.id, "newer")
         XCTAssertEqual(ApprovalRequestMerger.merge(newer, nil)?.id, "newer")
         XCTAssertNil(ApprovalRequestMerger.merge(nil, nil))
+    }
+
+    func testPollingBackoffPolicyUsesActiveAndIdleIntervals() {
+        let policy = PollingBackoffPolicy()
+        let now = Date(timeIntervalSince1970: 100)
+
+        XCTAssertEqual(policy.activityInterval(isActive: true, lastChangedAt: nil, now: now), 5)
+        XCTAssertEqual(policy.activityInterval(isActive: false, lastChangedAt: Date(timeIntervalSince1970: 80), now: now), 5)
+        XCTAssertEqual(policy.activityInterval(isActive: false, lastChangedAt: Date(timeIntervalSince1970: 60), now: now), 15)
+    }
+
+    func testPollingBackoffPolicyKeepsApprovalResponsiveWhenPending() {
+        let policy = PollingBackoffPolicy()
+        let now = Date(timeIntervalSince1970: 100)
+
+        XCTAssertEqual(
+            policy.approvalInterval(
+                isActive: false,
+                hasPendingApproval: true,
+                lastChangedAt: Date(timeIntervalSince1970: 10),
+                now: now
+            ),
+            5
+        )
+        XCTAssertEqual(
+            policy.approvalInterval(
+                isActive: false,
+                hasPendingApproval: false,
+                lastChangedAt: Date(timeIntervalSince1970: 10),
+                now: now
+            ),
+            15
+        )
+        XCTAssertEqual(
+            policy.approvalInterval(
+                isActive: true,
+                hasPendingApproval: false,
+                lastChangedAt: Date(timeIntervalSince1970: 10),
+                now: now
+            ),
+            15
+        )
+    }
+
+    func testUsageRefreshPolicyUsesProviderIntervalsAndFailureBackoff() {
+        let policy = UsageRefreshPolicy(minimumInterval: 60, failureBackoffInterval: 300)
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        XCTAssertTrue(policy.shouldRefresh(lastRefreshAt: nil, backoffUntil: nil, now: now))
+        XCTAssertFalse(
+            policy.shouldRefresh(
+                lastRefreshAt: Date(timeIntervalSince1970: 970),
+                backoffUntil: nil,
+                now: now
+            )
+        )
+        XCTAssertTrue(
+            policy.shouldRefresh(
+                lastRefreshAt: Date(timeIntervalSince1970: 900),
+                backoffUntil: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            policy.shouldRefresh(
+                lastRefreshAt: Date(timeIntervalSince1970: 900),
+                backoffUntil: Date(timeIntervalSince1970: 1_100),
+                force: true,
+                now: now
+            )
+        )
+        XCTAssertEqual(
+            policy.backoffUntil(snapshotWasMissing: true, now: now),
+            Date(timeIntervalSince1970: 1_300)
+        )
+        XCTAssertNil(policy.backoffUntil(snapshotWasMissing: false, now: now))
+    }
+
+    func testFileContentCacheInvalidatesRecentTextWhenFileSizeChanges() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HermitFlowTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+
+        let fileURL = directoryURL.appendingPathComponent("history.jsonl")
+        try "one\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let cache = FileContentCache()
+        XCTAssertEqual(cache.recentText(at: fileURL, maxBytes: 1024), "one\n")
+
+        try "one\ntwo\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        XCTAssertEqual(cache.recentText(at: fileURL, maxBytes: 1024), "one\ntwo\n")
+    }
+
+    func testLocalCodexDerivedCacheInvalidatesConversationSummaryWhenSignatureChanges() {
+        let cache = LocalCodexDerivedCacheProbe()
+        let url = URL(fileURLWithPath: "/tmp/hermitflow-tests/session.jsonl")
+        let originalSignature = FileContentSignature(size: 100, modifiedAt: Date(timeIntervalSince1970: 1_000))
+        let changedSignature = FileContentSignature(size: 101, modifiedAt: Date(timeIntervalSince1970: 1_000))
+
+        cache.storeConversationSummary("cached title", for: url, signature: originalSignature)
+
+        XCTAssertEqual(cache.cachedConversationSummary(for: url, signature: originalSignature)!, "cached title")
+        XCTAssertNil(cache.cachedConversationSummary(for: url, signature: changedSignature))
+    }
+
+    func testLocalCodexDerivedCacheExpiresShellSnapshotURLAfterTTL() {
+        let cache = LocalCodexDerivedCacheProbe()
+        let url = URL(fileURLWithPath: "/tmp/hermitflow-tests/thread.sh")
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        cache.storeShellSnapshotURL(url, for: "thread", now: now)
+
+        XCTAssertEqual(cache.cachedShellSnapshotURL(for: "thread", now: now.addingTimeInterval(4))!, url)
+        XCTAssertNil(cache.cachedShellSnapshotURL(for: "thread", now: now.addingTimeInterval(6)))
     }
 
     func testActivityMergerOrdersSessionsAndMergesStatusErrorsApprovalAndUsage() {

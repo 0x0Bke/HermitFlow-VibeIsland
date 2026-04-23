@@ -9,6 +9,85 @@ import Combine
 import Foundation
 import SwiftUI
 
+final class ClaudeQuestionFileWatcher: @unchecked Sendable {
+    typealias EventHandler = @Sendable () -> Void
+
+    private struct Monitor {
+        let source: DispatchSourceFileSystemObject
+    }
+
+    private let queue = DispatchQueue(label: "HermitFlow.claudeQuestionFileWatcher", qos: .utility)
+    private let debounceInterval: TimeInterval = 0.25
+    private var monitors: [Monitor] = []
+    private var pendingRefresh: DispatchWorkItem?
+    private var onChange: EventHandler?
+
+    deinit {
+        stop()
+    }
+
+    func start(onChange: @escaping EventHandler) {
+        queue.sync {
+            stopLocked()
+            self.onChange = onChange
+            let rootURL = FilePaths.hermitFlowHome.appendingPathComponent("claude-questions", isDirectory: true)
+            let latestURL = rootURL.appendingPathComponent("latest-question.json", isDirectory: false)
+            startMonitor(at: rootURL)
+            startMonitor(at: latestURL)
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            stopLocked()
+        }
+    }
+
+    private func stopLocked() {
+        pendingRefresh?.cancel()
+        pendingRefresh = nil
+        for monitor in monitors {
+            monitor.source.cancel()
+        }
+        monitors.removeAll()
+        onChange = nil
+    }
+
+    private func startMonitor(at url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+
+        let fileDescriptor = open(url.path, O_EVTONLY)
+        guard fileDescriptor >= 0 else {
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileDescriptor,
+            eventMask: [.write, .rename, .delete, .extend],
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.scheduleRefresh()
+        }
+        source.setCancelHandler {
+            close(fileDescriptor)
+        }
+        source.resume()
+        monitors.append(Monitor(source: source))
+    }
+
+    private func scheduleRefresh() {
+        pendingRefresh?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.onChange?()
+        }
+        pendingRefresh = workItem
+        queue.asyncAfter(deadline: .now() + debounceInterval, execute: workItem)
+    }
+}
+
 @MainActor
 final class ProgressStore: ObservableObject {
     typealias BrandLogo = IslandBrandLogo
@@ -19,19 +98,24 @@ final class ProgressStore: ObservableObject {
     let appStore: AppStore
 
     private var cancellables: Set<AnyCancellable> = []
-    private let claudeUsageRefreshInterval: TimeInterval = 10
+    private let usageMonitorTickInterval: TimeInterval = 30
+    private let claudeUsageRefreshInterval: TimeInterval = 60
     private let codexUsageRefreshInterval: TimeInterval = 120
     private let openCodeUsageRefreshInterval: TimeInterval = 120
-    private let localQuestionRefreshInterval: TimeInterval = 0.4
+    private let activeQuestionRefreshInterval: TimeInterval = 5.0
+    private let idleQuestionRefreshInterval: TimeInterval = 15.0
+    private let questionRecentChangeWindow: TimeInterval = 30.0
     private var usageTimer: Timer?
     private var questionTimer: Timer?
     private var lastClaudeUsageRefreshAt: Date?
     private var lastCodexUsageRefreshAt: Date?
     private var lastOpenCodeUsageRefreshAt: Date?
     private var lastQuestionRefreshAt: Date?
+    private var lastQuestionChangeAt: Date?
     private let askUserQuestionModeDefaultsKey = "HermitFlow.askUserQuestionHandlingMode"
     private let questionStore = QuestionStore()
     private let claudeQuestionSource = ClaudeQuestionSource()
+    private let claudeQuestionFileWatcher = ClaudeQuestionFileWatcher()
 
     var onOpenSettingsPanel: (() -> Void)?
 
@@ -94,6 +178,7 @@ final class ProgressStore: ObservableObject {
     var approvalPreviewEnabled: Bool { appStore.approvalPreviewEnabled }
     var approvalDefaultFocus: ApprovalDefaultFocusOption { appStore.approvalDefaultFocus }
     var usageDisplayType: UsageDisplayType { appStore.usageDisplayType }
+    var dotMatrixAnimationEnabled: Bool { appStore.dotMatrixAnimationEnabled }
     var inlineApprovalCommandExpanded: Bool { appStore.inlineApprovalCommandExpanded }
     var collapsedInlineApprovalID: String? { appStore.collapsedInlineApprovalID }
     var accessibilityPermissionGranted: Bool { appStore.accessibilityPermissionGranted }
@@ -239,6 +324,10 @@ final class ProgressStore: ObservableObject {
 
     func setUsageDisplayType(_ type: UsageDisplayType) {
         appStore.setUsageDisplayType(type)
+    }
+
+    func setDotMatrixAnimationEnabled(_ enabled: Bool) {
+        appStore.setDotMatrixAnimationEnabled(enabled)
     }
 
     func setAskUserQuestionHandlingMode(_ mode: AskUserQuestionHandlingMode) {
@@ -424,6 +513,7 @@ final class ProgressStore: ObservableObject {
             activeQuestionSupportsSubmission = supportsSubmission
         }
         if promptChanged || supportsSubmissionChanged {
+            lastQuestionChangeAt = .now
             questionStore.update(with: latestPrompt, supportsSubmission: supportsSubmission)
             syncQuestionPresentation()
         }
@@ -452,7 +542,7 @@ final class ProgressStore: ObservableObject {
             return
         }
 
-        let timer = Timer.scheduledTimer(withTimeInterval: claudeUsageRefreshInterval, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: usageMonitorTickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.refreshUsageTimerTick()
             }
@@ -466,13 +556,12 @@ final class ProgressStore: ObservableObject {
             return
         }
 
-        let timer = Timer.scheduledTimer(withTimeInterval: localQuestionRefreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshQuestionTimerTick()
-            }
+        if lastQuestionChangeAt == nil {
+            lastQuestionChangeAt = .now
         }
-        RunLoop.main.add(timer, forMode: .common)
-        questionTimer = timer
+        startClaudeQuestionFileWatcher()
+        refreshLocalQuestionStatus()
+        scheduleNextQuestionPoll()
     }
 
     func stopUsageMonitoring() {
@@ -483,6 +572,7 @@ final class ProgressStore: ObservableObject {
     func stopQuestionMonitoring() {
         questionTimer?.invalidate()
         questionTimer = nil
+        claudeQuestionFileWatcher.stop()
     }
 
     func chooseProgressFile() {
@@ -494,17 +584,43 @@ final class ProgressStore: ObservableObject {
     }
 
     private func refreshUsageTimerTick(now: Date = .now) {
-        if shouldRefreshClaudeUsage(now: now)
-            || shouldRefreshCodexUsage(now: now)
-            || shouldRefreshOpenCodeUsage(now: now) {
-            refreshUsageState()
+        let shouldRefreshClaude = shouldRefreshClaudeUsage(now: now)
+        let shouldRefreshCodex = shouldRefreshCodexUsage(now: now)
+        let shouldRefreshOpenCode = shouldRefreshOpenCodeUsage(now: now)
+
+        guard shouldRefreshClaude || shouldRefreshCodex || shouldRefreshOpenCode else {
+            return
+        }
+
+        appStore.refreshUsage()
+        if shouldRefreshClaude {
+            lastClaudeUsageRefreshAt = now
+        }
+        if shouldRefreshCodex {
+            lastCodexUsageRefreshAt = now
+        }
+        if shouldRefreshOpenCode {
+            lastOpenCodeUsageRefreshAt = now
         }
     }
 
     private func refreshQuestionTimerTick(now: Date = .now) {
-        if shouldRefreshQuestion(now: now) {
-            refreshLocalQuestionStatus()
-            lastQuestionRefreshAt = now
+        refreshLocalQuestionStatus()
+        lastQuestionRefreshAt = now
+        scheduleNextQuestionPoll(now: now)
+    }
+
+    private func refreshQuestionFromFileEvent(now: Date = .now) {
+        refreshLocalQuestionStatus()
+        lastQuestionRefreshAt = now
+        scheduleNextQuestionPoll(now: now)
+    }
+
+    private func startClaudeQuestionFileWatcher() {
+        claudeQuestionFileWatcher.start { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.refreshQuestionFromFileEvent()
+            }
         }
     }
 
@@ -537,7 +653,32 @@ final class ProgressStore: ObservableObject {
             return true
         }
 
-        return now.timeIntervalSince(lastQuestionRefreshAt) >= localQuestionRefreshInterval
+        return now.timeIntervalSince(lastQuestionRefreshAt) >= questionPollInterval(now: now)
+    }
+
+    private func scheduleNextQuestionPoll(now: Date = .now) {
+        questionTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: questionPollInterval(now: now), repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshQuestionTimerTick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        questionTimer = timer
+    }
+
+    private func questionPollInterval(now: Date) -> TimeInterval {
+        if activeQuestionPrompt != nil || isQuestionRecentlyChanged(now: now) {
+            return activeQuestionRefreshInterval
+        }
+        return idleQuestionRefreshInterval
+    }
+
+    private func isQuestionRecentlyChanged(now: Date) -> Bool {
+        guard let lastQuestionChangeAt else {
+            return true
+        }
+        return now.timeIntervalSince(lastQuestionChangeAt) < questionRecentChangeWindow
     }
 
     private func performQuestionSubmit() {

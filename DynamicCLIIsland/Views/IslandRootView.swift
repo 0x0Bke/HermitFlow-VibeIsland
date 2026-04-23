@@ -1,9 +1,11 @@
 import SwiftUI
+import QuartzCore
 
 struct IslandRootView: View {
     @ObservedObject var store: ProgressStore
     @State private var activePanelTransition: PanelTransition?
     @State private var panelTransitionCleanupTask: Task<Void, Never>?
+    @StateObject private var brandLogoImageCache = BrandLogoImageCache()
 
     var body: some View {
         GeometryReader { proxy in
@@ -26,7 +28,6 @@ struct IslandRootView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipShape(islandShape)
-            .shadow(color: .black.opacity(0), radius: 18, y: 8)
             .contentShape(islandShape)
             .onHover { isHovering in
                 store.handlePanelHover(isHovering)
@@ -240,6 +241,7 @@ struct IslandRootView: View {
             .animation(nil, value: store.codexStatus)
             .animation(nil, value: store.activeRunningDetail)
             .animation(nil, value: store.runningGlyphAnimationSuppressed)
+            .animation(nil, value: store.dotMatrixAnimationEnabled)
     }
 
     @ViewBuilder
@@ -252,7 +254,10 @@ struct IslandRootView: View {
 
     @ViewBuilder
     private func brandLogoImage(size: CGFloat) -> some View {
-        if let image = resolvedBrandLogoImage() {
+        if let image = brandLogoImageCache.image(
+            for: store.selectedLogo,
+            customLogoPath: store.customLogoPath
+        ) {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
@@ -261,23 +266,6 @@ struct IslandRootView: View {
             EmptyView()
                 .frame(width: size, height: size)
         }
-    }
-
-    private func resolvedBrandLogoImage() -> NSImage? {
-        if store.selectedLogo == .custom,
-           let customLogoPath = store.customLogoPath,
-           let image = NSImage(contentsOfFile: customLogoPath) {
-            return image
-        }
-
-        let resourceName = store.selectedLogo == .custom
-            ? IslandBrandLogo.clawd.resourceName
-            : store.selectedLogo.resourceName
-        guard let imageURL = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
-            return nil
-        }
-
-        return NSImage(contentsOf: imageURL)
     }
 
     private func handleDisplayModeChange(
@@ -312,37 +300,43 @@ struct IslandRootView: View {
         runningDetail: IslandRunningDetail?
     ) -> some View {
         if shouldUseSpinnerStatusGlyph {
-            DotMatrixSpinnerStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
+            if store.dotMatrixAnimationEnabled {
+                DotMatrixSpinnerStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
+            } else {
+                BlueBreathingStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
+            }
         } else {
             switch state {
             case .idle:
                 IdleStatusGlyph()
             case .running:
-                if runningDetail == .thinking {
-                    DotMatrixSineWaveStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
-                } else if store.runningGlyphAnimationSuppressed {
-                    StaticRunningStatusGlyph()
+                if store.dotMatrixAnimationEnabled {
+                    DotMatrixWaveStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
                 } else {
-                    RunningStatusGlyph()
+                    RunningStatusGlyph(animationAllowed: !store.runningGlyphAnimationSuppressed)
                 }
             case .success:
-                DotMatrixSuccessStatusGlyph(isAnimating: true)
+                if store.dotMatrixAnimationEnabled {
+                    DotMatrixSuccessStatusGlyph(isAnimating: !store.runningGlyphAnimationSuppressed)
+                } else {
+                    SuccessStatusGlyph()
+                }
             case .failure:
-                DotMatrixFailureStatusGlyph(isAnimating: true)
+                TerminalStatusGlyph(state: .failure)
             }
         }
     }
 
     private var statusGlyphIdentity: String {
         if let approvalRequest = store.approvalRequest {
-            return "spinner-approval-\(approvalRequest.id)-\(store.runningGlyphAnimationSuppressed)"
+            return "spinner-approval-\(approvalRequest.id)-\(store.runningGlyphAnimationSuppressed)-\(store.dotMatrixAnimationEnabled)"
         }
 
         if let prompt = store.activeQuestionPrompt {
-            return "spinner-question-\(prompt.id)-\(store.runningGlyphAnimationSuppressed)"
+            return "spinner-question-\(prompt.id)-\(store.runningGlyphAnimationSuppressed)-\(store.dotMatrixAnimationEnabled)"
         }
 
-        return "\(store.codexStatus.rawValue)-\(store.activeRunningDetail?.rawValue ?? "none")-\(store.runningGlyphAnimationSuppressed)"
+        return "\(store.codexStatus.rawValue)-\(store.activeRunningDetail?.rawValue ?? "none")-\(store.runningGlyphAnimationSuppressed)-\(store.dotMatrixAnimationEnabled)"
     }
 
     private var shouldUseSpinnerStatusGlyph: Bool {
@@ -1131,14 +1125,233 @@ private struct IdleStatusGlyph: View {
 }
 
 private struct RunningStatusGlyph: View {
+    let animationAllowed: Bool
+
     var body: some View {
-        DotMatrixWaveStatusGlyph(isAnimating: true)
+        BlueBreathingStatusGlyph(isAnimating: animationAllowed)
     }
 }
 
 private struct StaticRunningStatusGlyph: View {
     var body: some View {
         DotMatrixWaveStatusGlyph(isAnimating: false)
+    }
+}
+
+private struct BlueBreathingStatusGlyph: NSViewRepresentable {
+    let isAnimating: Bool
+
+    func makeNSView(context: Context) -> BlueBreathingStatusNSView {
+        let view = BlueBreathingStatusNSView()
+        view.setAnimating(isAnimating)
+        return view
+    }
+
+    func updateNSView(_ nsView: BlueBreathingStatusNSView, context: Context) {
+        nsView.setAnimating(isAnimating)
+    }
+}
+
+private final class BlueBreathingStatusNSView: NSView {
+    private let baseLayer = CALayer()
+    private let coreLayer = CALayer()
+    private let ringLayer = CALayer()
+    private var isAnimating = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        setupLayers()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        setupLayers()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 18, height: 18)
+    }
+
+    override func layout() {
+        super.layout()
+        layoutGlyphLayers()
+    }
+
+    func setAnimating(_ shouldAnimate: Bool) {
+        guard shouldAnimate != isAnimating else {
+            return
+        }
+        isAnimating = shouldAnimate
+
+        if shouldAnimate {
+            startBreathingAnimation()
+        } else {
+            stopBreathingAnimation()
+        }
+    }
+
+    private func setupLayers() {
+        guard let layer else {
+            return
+        }
+
+        layer.masksToBounds = false
+        baseLayer.backgroundColor = NSColor(
+            calibratedRed: 0.03,
+            green: 0.22,
+            blue: 0.52,
+            alpha: 1
+        ).cgColor
+        coreLayer.backgroundColor = NSColor(
+            calibratedRed: 0.0,
+            green: 0.62,
+            blue: 1.0,
+            alpha: 1
+        ).cgColor
+        ringLayer.borderColor = NSColor(
+            calibratedRed: 0.42,
+            green: 0.86,
+            blue: 1.0,
+            alpha: 0.85
+        ).cgColor
+        ringLayer.borderWidth = 1
+
+        [baseLayer, coreLayer, ringLayer].forEach {
+            $0.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+            layer.addSublayer($0)
+        }
+
+        stopBreathingAnimation()
+    }
+
+    private func layoutGlyphLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        setCircleFrame(baseLayer, side: 12, center: center)
+        setCircleFrame(coreLayer, side: 9.5, center: center)
+        setCircleFrame(ringLayer, side: 14, center: center)
+
+        CATransaction.commit()
+    }
+
+    private func setCircleFrame(_ layer: CALayer, side: CGFloat, center: CGPoint) {
+        layer.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        layer.position = center
+        layer.cornerRadius = side / 2
+    }
+
+    private func startBreathingAnimation() {
+        coreLayer.removeAllAnimations()
+        ringLayer.removeAllAnimations()
+
+        coreLayer.opacity = 0.95
+        ringLayer.opacity = 0.48
+        coreLayer.transform = CATransform3DIdentity
+        ringLayer.transform = CATransform3DIdentity
+
+        coreLayer.add(basicAnimation(keyPath: "opacity", from: 0.42, to: 0.95), forKey: "opacity")
+        coreLayer.add(basicAnimation(keyPath: "transform.scale", from: 0.72, to: 1.08), forKey: "scale")
+        ringLayer.add(basicAnimation(keyPath: "opacity", from: 0.12, to: 0.48), forKey: "opacity")
+        ringLayer.add(basicAnimation(keyPath: "transform.scale", from: 0.84, to: 1.14), forKey: "scale")
+    }
+
+    private func stopBreathingAnimation() {
+        coreLayer.removeAllAnimations()
+        ringLayer.removeAllAnimations()
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        coreLayer.opacity = 0.42
+        ringLayer.opacity = 0.12
+        coreLayer.transform = CATransform3DMakeScale(0.72, 0.72, 1)
+        ringLayer.transform = CATransform3DMakeScale(0.84, 0.84, 1)
+        CATransaction.commit()
+    }
+
+    private func basicAnimation(keyPath: String, from: Float, to: Float) -> CABasicAnimation {
+        let animation = CABasicAnimation(keyPath: keyPath)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = 1.05
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.isRemovedOnCompletion = false
+        return animation
+    }
+}
+
+private struct SuccessStatusGlyph: View {
+    var body: some View {
+        SolidStatusGlyph(
+            fill: Color(.sRGB, red: 0.0, green: 0.72, blue: 0.28, opacity: 1),
+            symbol: "checkmark"
+        )
+    }
+}
+
+private struct TerminalStatusGlyph: View {
+    let state: IslandCodexActivityState
+    @State private var isAnimating = true
+
+    var body: some View {
+        Group {
+            switch state {
+            case .success:
+                SuccessStatusGlyph()
+            case .failure:
+                DotMatrixFailureStatusGlyph(isAnimating: isAnimating)
+            case .idle:
+                IdleStatusGlyph()
+            case .running:
+                StaticRunningStatusGlyph()
+            }
+        }
+        .task(id: state) {
+            isAnimating = true
+            try? await Task.sleep(nanoseconds: UInt64(1.25 * 1_000_000_000))
+            guard !Task.isCancelled else {
+                return
+            }
+            isAnimating = false
+        }
+    }
+}
+
+private final class BrandLogoImageCache: ObservableObject {
+    private var imageByKey: [String: NSImage] = [:]
+
+    func image(for logo: IslandBrandLogo, customLogoPath: String?) -> NSImage? {
+        if logo == .custom, let customLogoPath {
+            return cachedImage(key: "custom:\(customLogoPath)") {
+                NSImage(contentsOfFile: customLogoPath)
+            }
+        }
+
+        let resourceName = logo == .custom ? IslandBrandLogo.clawd.resourceName : logo.resourceName
+        return cachedImage(key: "bundle:\(resourceName)") {
+            guard let imageURL = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
+                return nil
+            }
+            return NSImage(contentsOf: imageURL)
+        }
+    }
+
+    private func cachedImage(key: String, loader: () -> NSImage?) -> NSImage? {
+        if let image = imageByKey[key] {
+            return image
+        }
+        guard let image = loader() else {
+            return nil
+        }
+        imageByKey[key] = image
+        return image
     }
 }
 

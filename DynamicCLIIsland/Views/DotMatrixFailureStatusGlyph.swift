@@ -16,7 +16,6 @@ struct DotMatrixFailureStatusGlyph: View {
     private let restingColor = Color(.sRGB, red: 29 / 255, green: 29 / 255, blue: 29 / 255, opacity: 0.72)
     private let secondaryColor = (red: 210.0 / 255.0, green: 56.0 / 255.0, blue: 72.0 / 255.0)
     private let activeColor = (red: 1.0, green: 92.0 / 255.0, blue: 110.0 / 255.0)
-    private let glowColor = Color(.sRGB, red: 1.0, green: 176 / 255, blue: 184 / 255, opacity: 1)
     private let crossPathIndices: [Int] = [0, 6, 12, 8, 4, 16, 20, 18, 24]
 
     private let pulsesByDot: [[Pulse]] = [
@@ -31,7 +30,7 @@ struct DotMatrixFailureStatusGlyph: View {
     var body: some View {
         Group {
             if isAnimating {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 18.0, paused: false)) { timeline in
                     glyphBody(at: normalizedPhase(for: timeline.date))
                 }
             } else {
@@ -53,12 +52,10 @@ struct DotMatrixFailureStatusGlyph: View {
                             .fill(dotFill(intensity: intensity))
                             .frame(width: dotSize, height: dotSize)
                             .scaleEffect(1 + intensity * 0.08)
-                            .shadow(color: glowColor.opacity(intensity * 0.56), radius: 0.6 + intensity * 1.7)
                     }
                 }
             }
         }
-        .drawingGroup(opaque: false, colorMode: .linear)
     }
 
     private func normalizedPhase(for date: Date) -> Double {

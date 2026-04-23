@@ -77,6 +77,7 @@ final class AppStore: ObservableObject {
     var approvalPreviewEnabled: Bool { presentationStore.approvalPreviewEnabled }
     var approvalDefaultFocus: ApprovalDefaultFocusOption { presentationStore.approvalDefaultFocus }
     var usageDisplayType: UsageDisplayType { presentationStore.usageDisplayType }
+    var dotMatrixAnimationEnabled: Bool { presentationStore.dotMatrixAnimationEnabled }
     var inlineApprovalCommandExpanded: Bool { presentationStore.inlineApprovalCommandExpanded }
     var collapsedInlineApprovalID: String? { presentationStore.collapsedInlineApprovalID }
     var accessibilityPermissionGranted: Bool { runtimeStore.accessibilityPermissionGranted }
@@ -237,6 +238,10 @@ final class AppStore: ObservableObject {
 
     func setUsageDisplayType(_ type: UsageDisplayType) {
         presentationStore.setUsageDisplayType(type)
+    }
+
+    func setDotMatrixAnimationEnabled(_ enabled: Bool) {
+        presentationStore.setDotMatrixAnimationEnabled(enabled)
     }
 
     func updateInlineApprovalCommandExpanded(_ expanded: Bool) {

@@ -16,7 +16,6 @@ struct DotMatrixSuccessStatusGlyph: View {
     private let restingColor = Color(.sRGB, red: 29 / 255, green: 29 / 255, blue: 29 / 255, opacity: 0.72)
     private let secondaryColor = (red: 0.0, green: 214.0 / 255.0, blue: 79.0 / 255.0)
     private let activeColor = (red: 0.0, green: 1.0, blue: 94.0 / 255.0)
-    private let glowColor = Color(.sRGB, red: 142 / 255, green: 1.0, blue: 188 / 255, opacity: 1)
     private let checkPathIndices: [Int] = [15, 21, 17, 13, 9]
 
     private let pulsesByDot: [[Pulse]] = [
@@ -30,7 +29,7 @@ struct DotMatrixSuccessStatusGlyph: View {
     var body: some View {
         Group {
             if isAnimating {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 18.0, paused: false)) { timeline in
                     glyphBody(at: normalizedPhase(for: timeline.date))
                 }
             } else {
@@ -52,12 +51,10 @@ struct DotMatrixSuccessStatusGlyph: View {
                             .fill(dotFill(intensity: intensity))
                             .frame(width: dotSize, height: dotSize)
                             .scaleEffect(1 + intensity * 0.085)
-                            .shadow(color: glowColor.opacity(intensity * 0.62), radius: 0.65 + intensity * 1.95)
                     }
                 }
             }
         }
-        .drawingGroup(opaque: false, colorMode: .linear)
     }
 
     private func normalizedPhase(for date: Date) -> Double {

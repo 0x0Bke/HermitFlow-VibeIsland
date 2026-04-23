@@ -8,6 +8,241 @@
 import AppKit
 import Foundation
 
+struct PollingBackoffPolicy: Equatable {
+    let activeInterval: TimeInterval
+    let idleInterval: TimeInterval
+    let approvalActiveInterval: TimeInterval
+    let approvalIdleInterval: TimeInterval
+    let recentChangeWindow: TimeInterval
+
+    init(
+        activeInterval: TimeInterval = 5.0,
+        idleInterval: TimeInterval = 15.0,
+        approvalActiveInterval: TimeInterval = 5.0,
+        approvalIdleInterval: TimeInterval = 15.0,
+        recentChangeWindow: TimeInterval = 30.0
+    ) {
+        self.activeInterval = activeInterval
+        self.idleInterval = idleInterval
+        self.approvalActiveInterval = approvalActiveInterval
+        self.approvalIdleInterval = approvalIdleInterval
+        self.recentChangeWindow = recentChangeWindow
+    }
+
+    func activityInterval(isActive: Bool, lastChangedAt: Date?, now: Date = .now) -> TimeInterval {
+        if isActive || isRecent(lastChangedAt, now: now) {
+            return activeInterval
+        }
+        return idleInterval
+    }
+
+    func approvalInterval(
+        isActive: Bool,
+        hasPendingApproval: Bool,
+        lastChangedAt: Date?,
+        now: Date = .now
+    ) -> TimeInterval {
+        if hasPendingApproval || isRecent(lastChangedAt, now: now) {
+            return approvalActiveInterval
+        }
+        return approvalIdleInterval
+    }
+
+    private func isRecent(_ date: Date?, now: Date) -> Bool {
+        guard let date else {
+            return true
+        }
+        return now.timeIntervalSince(date) < recentChangeWindow
+    }
+}
+
+final class LocalSourceFileWatcher: @unchecked Sendable {
+    typealias EventHandler = @Sendable () -> Void
+
+    private struct WatchTarget {
+        let url: URL
+        let eventMask: DispatchSource.FileSystemEvent
+        let triggersActivity: Bool
+        let triggersApproval: Bool
+    }
+
+    private struct Monitor {
+        let fileDescriptor: CInt
+        let source: DispatchSourceFileSystemObject
+    }
+
+    private let queue: DispatchQueue
+    private let debounceInterval: TimeInterval
+    private var monitors: [Monitor] = []
+    private var pendingActivityRefresh: DispatchWorkItem?
+    private var pendingApprovalRefresh: DispatchWorkItem?
+    private var onActivityChange: EventHandler?
+    private var onApprovalChange: EventHandler?
+    private var running = false
+
+    init(
+        debounceInterval: TimeInterval = 0.25,
+        queue: DispatchQueue = DispatchQueue(label: "HermitFlow.localSourceFileWatcher", qos: .utility)
+    ) {
+        self.debounceInterval = debounceInterval
+        self.queue = queue
+    }
+
+    deinit {
+        stop()
+    }
+
+    func start(
+        onActivityChange: @escaping EventHandler,
+        onApprovalChange: @escaping EventHandler
+    ) {
+        queue.sync {
+            stopLocked()
+            self.onActivityChange = onActivityChange
+            self.onApprovalChange = onApprovalChange
+            for target in Self.watchTargets() {
+                startMonitor(for: target)
+            }
+            running = !monitors.isEmpty
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            stopLocked()
+        }
+    }
+
+    private func stopLocked() {
+        pendingActivityRefresh?.cancel()
+        pendingActivityRefresh = nil
+        pendingApprovalRefresh?.cancel()
+        pendingApprovalRefresh = nil
+        for monitor in monitors {
+            monitor.source.cancel()
+        }
+        monitors.removeAll()
+        onActivityChange = nil
+        onApprovalChange = nil
+        running = false
+    }
+
+    private func startMonitor(for target: WatchTarget) {
+        guard FileManager.default.fileExists(atPath: target.url.path) else {
+            return
+        }
+
+        let fileDescriptor = open(target.url.path, O_EVTONLY)
+        guard fileDescriptor >= 0 else {
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileDescriptor,
+            eventMask: target.eventMask,
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.handleEvent(target)
+        }
+        source.setCancelHandler {
+            close(fileDescriptor)
+        }
+        source.resume()
+        monitors.append(Monitor(fileDescriptor: fileDescriptor, source: source))
+    }
+
+    private func handleEvent(_ target: WatchTarget) {
+        if target.triggersActivity {
+            scheduleActivityRefresh()
+        }
+        if target.triggersApproval {
+            scheduleApprovalRefresh()
+        }
+    }
+
+    private func scheduleActivityRefresh() {
+        pendingActivityRefresh?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.onActivityChange?()
+        }
+        pendingActivityRefresh = workItem
+        queue.asyncAfter(deadline: .now() + debounceInterval, execute: workItem)
+    }
+
+    private func scheduleApprovalRefresh() {
+        pendingApprovalRefresh?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.onApprovalChange?()
+        }
+        pendingApprovalRefresh = workItem
+        queue.asyncAfter(deadline: .now() + debounceInterval, execute: workItem)
+    }
+
+    private static func watchTargets() -> [WatchTarget] {
+        let codexSessions = FilePaths.codexHome.appendingPathComponent("sessions", isDirectory: true)
+        let codexHistory = FilePaths.codexHome.appendingPathComponent("history.jsonl", isDirectory: false)
+        let codexShellSnapshots = FilePaths.codexHome.appendingPathComponent("shell_snapshots", isDirectory: true)
+        let claudeQuestions = FilePaths.hermitFlowHome.appendingPathComponent("claude-questions", isDirectory: true)
+        let claudeLatestQuestion = claudeQuestions.appendingPathComponent("latest-question.json", isDirectory: false)
+
+        return [
+            WatchTarget(url: codexSessions, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: true),
+            WatchTarget(url: codexHistory, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: false),
+            WatchTarget(url: codexShellSnapshots, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: false),
+            WatchTarget(url: FilePaths.claudeStatusLineDebug, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: false),
+            WatchTarget(url: claudeQuestions, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: true),
+            WatchTarget(url: claudeLatestQuestion, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: true),
+            WatchTarget(url: FilePaths.openCodeDataDirectory, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: true),
+            WatchTarget(url: FilePaths.openCodeDatabase, eventMask: [.write, .rename, .delete, .extend], triggersActivity: true, triggersApproval: true)
+        ]
+    }
+}
+
+struct UsageRefreshPolicy: Equatable {
+    let minimumInterval: TimeInterval
+    let failureBackoffInterval: TimeInterval
+
+    init(
+        minimumInterval: TimeInterval,
+        failureBackoffInterval: TimeInterval = 5 * 60
+    ) {
+        self.minimumInterval = minimumInterval
+        self.failureBackoffInterval = failureBackoffInterval
+    }
+
+    func shouldRefresh(
+        lastRefreshAt: Date?,
+        backoffUntil: Date?,
+        force: Bool = false,
+        now: Date = .now
+    ) -> Bool {
+        if let backoffUntil, now < backoffUntil {
+            return false
+        }
+
+        if force {
+            return true
+        }
+
+        guard let lastRefreshAt else {
+            return true
+        }
+
+        return now.timeIntervalSince(lastRefreshAt) >= minimumInterval
+    }
+
+    func backoffUntil(snapshotWasMissing: Bool, now: Date = .now) -> Date? {
+        snapshotWasMissing ? now.addingTimeInterval(failureBackoffInterval) : nil
+    }
+}
+
+private enum UsageRefreshProvider {
+    case claude
+    case codex
+    case openCode
+}
+
 @MainActor
 final class RuntimeStore: ObservableObject {
     typealias SourceMode = IslandSourceMode
@@ -43,10 +278,11 @@ final class RuntimeStore: ObservableObject {
         usageProviderState.openCode
     }
 
-    private let localCodexPollInterval: TimeInterval = 1.0
-    private let localApprovalPollInterval: TimeInterval = 0.25
     private let accessibilityPermissionPollInterval: TimeInterval = 1.0
-    private let usageRefreshMinimumInterval: TimeInterval = 30.0
+    private let claudeUsageRefreshMinimumInterval: TimeInterval = 60.0
+    private let codexUsageRefreshMinimumInterval: TimeInterval = 120.0
+    private let openCodeUsageRefreshMinimumInterval: TimeInterval = 120.0
+    private let usageFailureBackoffInterval: TimeInterval = 5 * 60
     private let accessibilityPromptDismissedDefaultsKey = "HermitFlow.accessibilityPromptDismissed"
     private let aggregateSuccessFlashDuration: TimeInterval = 1.25
     private let aggregateFailureFlashDuration: TimeInterval = 2.0
@@ -55,15 +291,34 @@ final class RuntimeStore: ObservableObject {
     private var approvalTimer: Timer?
     private var accessibilityTimer: Timer?
     private var localCodexRefreshInFlight = false
+    private var localCodexRefreshPending = false
     private var localApprovalRefreshInFlight = false
+    private var localApprovalRefreshPending = false
     private var usageRefreshInFlight = false
     private var codexRealtimeSourceStarted = false
+    private var localHookRefreshDebounceTask: Task<Void, Never>?
     private var lastFileModificationDate: Date?
-    private var lastUsageRefreshAt: Date?
+    private var lastClaudeUsageRefreshAt: Date?
+    private var lastCodexUsageRefreshAt: Date?
+    private var lastOpenCodeUsageRefreshAt: Date?
+    private var claudeUsageBackoffUntil: Date?
+    private var codexUsageBackoffUntil: Date?
+    private var openCodeUsageBackoffUntil: Date?
+    private var lastRuntimeChangeAt: Date?
+    private var lastApprovalChangeAt: Date?
+    private let pollingBackoffPolicy = PollingBackoffPolicy()
+    private var localCodexRefreshCount = 0
+    private var localApprovalRefreshCount = 0
+    private var usageRefreshCount = 0
+    private var claudeUsageFetchCount = 0
+    private var codexUsageFetchCount = 0
+    private var openCodeUsageFetchCount = 0
+    private var lastPerformanceLogAt = Date()
     private var reducer = RuntimeReducer()
     private var reducerState = RuntimeReducer.State()
     private var aggregateStatusOverride: AggregateStatusOverride?
     private var aggregateStatusOverrideTask: Task<Void, Never>?
+    private var lastAppliedActivitySignature: String?
 
     // TODO: Remove these legacy dependencies once reducer migration is complete.
     let sessionStore: SessionStore
@@ -84,6 +339,7 @@ final class RuntimeStore: ObservableObject {
     let claudeHTTPCallbackServer: ClaudeHTTPCallbackServer
     let openCodeHookInstaller: OpenCodeHookInstaller
     let codexHookSource: CodexHookSource
+    let localSourceFileWatcher: LocalSourceFileWatcher
     let codexSQLiteReader: CodexSQLiteReader
     let codexSessionReader: CodexSessionReader
     let codexLogReader: CodexLogReader
@@ -118,6 +374,7 @@ final class RuntimeStore: ObservableObject {
         claudeHTTPCallbackServer: ClaudeHTTPCallbackServer? = nil,
         openCodeHookInstaller: OpenCodeHookInstaller = OpenCodeHookInstaller(),
         codexHookSource: CodexHookSource? = nil,
+        localSourceFileWatcher: LocalSourceFileWatcher = LocalSourceFileWatcher(),
         codexSQLiteReader: CodexSQLiteReader = CodexSQLiteReader(),
         codexSessionReader: CodexSessionReader = CodexSessionReader(),
         codexLogReader: CodexLogReader = CodexLogReader(),
@@ -163,6 +420,7 @@ final class RuntimeStore: ObservableObject {
         )
         self.openCodeHookInstaller = openCodeHookInstaller
         self.codexHookSource = codexHookSource ?? CodexHookSource(source: localCodexSource, sessionReader: codexSessionReader)
+        self.localSourceFileWatcher = localSourceFileWatcher
         self.codexSQLiteReader = codexSQLiteReader
         self.codexSessionReader = codexSessionReader
         self.codexLogReader = codexLogReader
@@ -304,33 +562,42 @@ final class RuntimeStore: ObservableObject {
     }
 
     func startLocalCodexMonitoring() {
+        timer?.invalidate()
+        approvalTimer?.invalidate()
+        codexHookSource.stop()
+        codexRealtimeSourceStarted = false
         sourceMode = .localCodex
         externalFilePath = nil
         lastFileModificationDate = nil
+        localCodexRefreshPending = false
+        localApprovalRefreshPending = false
+        lastRuntimeChangeAt = .now
+        lastApprovalChangeAt = .now
+        lastAppliedActivitySignature = nil
         dispatch([
             .diagnosticUpdated(DiagnosticsEvent(approvalDiagnosticMessage: nil)),
             .runtimeStatusMessageUpdated("Loading local Codex activity")
         ])
         refreshUsageIfNeeded(force: true)
-        startCodexRealtimeSourceIfNeeded()
+        startLocalHookRefreshCallbacks()
+        startLocalSourceFileWatcher()
         refreshSourceHealthReports()
         refreshLocalCodexStatus()
         refreshLocalApprovalStatus()
-        restartTimer(interval: localCodexPollInterval) { [weak self] in
-            self?.refreshLocalCodexStatus()
-        }
-        restartApprovalTimer(interval: localApprovalPollInterval) { [weak self] in
-            self?.refreshLocalApprovalStatus()
-        }
+        scheduleNextLocalCodexPoll()
+        scheduleNextApprovalPoll()
     }
 
     func startDemoMode() {
         codexHookSource.stop()
         codexRealtimeSourceStarted = false
+        localSourceFileWatcher.stop()
+        stopLocalHookRefreshCallbacks()
         stopApprovalTimer()
         sourceMode = .demo
         externalFilePath = nil
         lastFileModificationDate = nil
+        lastAppliedActivitySignature = nil
         dispatch([
             .approvalResolved(
                 ApprovalEvent(
@@ -367,6 +634,8 @@ final class RuntimeStore: ObservableObject {
     func attachProgressFile(_ url: URL) {
         codexHookSource.stop()
         codexRealtimeSourceStarted = false
+        localSourceFileWatcher.stop()
+        stopLocalHookRefreshCallbacks()
         stopApprovalTimer()
         sourceMode = .file(url)
         externalFilePath = url.path
@@ -384,10 +653,13 @@ final class RuntimeStore: ObservableObject {
 
     func refreshLocalCodexStatus() {
         guard !localCodexRefreshInFlight else {
+            localCodexRefreshPending = true
             return
         }
 
         localCodexRefreshInFlight = true
+        localCodexRefreshCount += 1
+        logPerformanceCountersIfNeeded()
         let source = localCodexSource
         let claudeSource = localClaudeSource
         let openCodeSource = localOpenCodeSource
@@ -410,18 +682,28 @@ final class RuntimeStore: ObservableObject {
                     return
                 }
 
-                self.apply(activitySnapshot: snapshot)
-                self.refreshUsageIfNeeded()
+                if self.shouldApply(activitySnapshot: snapshot) {
+                    self.apply(activitySnapshot: snapshot)
+                }
+                if self.localCodexRefreshPending {
+                    self.localCodexRefreshPending = false
+                    self.refreshLocalCodexStatus()
+                } else {
+                    self.scheduleNextLocalCodexPoll()
+                }
             }
         }
     }
 
     func refreshLocalApprovalStatus() {
         guard !localApprovalRefreshInFlight else {
+            localApprovalRefreshPending = true
             return
         }
 
         localApprovalRefreshInFlight = true
+        localApprovalRefreshCount += 1
+        logPerformanceCountersIfNeeded()
         let source = localCodexSource
         let claudeSource = localClaudeSource
         let openCodeSource = localOpenCodeSource
@@ -480,6 +762,12 @@ final class RuntimeStore: ObservableObject {
                 if !events.isEmpty {
                     self.dispatch(events)
                 }
+                if self.localApprovalRefreshPending {
+                    self.localApprovalRefreshPending = false
+                    self.refreshLocalApprovalStatus()
+                } else {
+                    self.scheduleNextApprovalPoll()
+                }
             }
         }
     }
@@ -506,6 +794,15 @@ final class RuntimeStore: ObservableObject {
         dispatch(events)
     }
 
+    private func shouldApply(activitySnapshot: ActivitySourceSnapshot) -> Bool {
+        let signature = semanticSignature(for: activitySnapshot)
+        guard signature != lastAppliedActivitySignature else {
+            return false
+        }
+        lastAppliedActivitySignature = signature
+        return true
+    }
+
     func apply(runtimeState: IslandRuntimeState) {
         let snapshot = ActivitySourceSnapshot(
             sessions: runtimeState.sessions,
@@ -523,6 +820,7 @@ final class RuntimeStore: ObservableObject {
         let previousCodexStatus = codexStatus
         let previousApprovalRequest = approvalRequest
         let previousApprovalRequestID = previousApprovalRequest?.id
+        let previousSessionFingerprint = sessionFingerprint(sessions)
 
         let liveApprovalRequest = reducerState.approvalRequest
         let previewApprovalRequest = reducerState.approvalState.previewRequest
@@ -567,6 +865,13 @@ final class RuntimeStore: ObservableObject {
         usageSnapshots = reducerState.usageSnapshots
         usageProviderState = reducerState.usageProviderState
 
+        if previousCodexStatus != codexStatus || previousSessionFingerprint != sessionFingerprint(sessions) {
+            lastRuntimeChangeAt = .now
+        }
+        if previousApprovalRequestID != approvalRequest?.id {
+            lastApprovalChangeAt = .now
+        }
+
         presentationStore?.syncRuntimeContext(
             approvalRequest: resolvedApprovalRequest,
             sessions: reducerState.sessions,
@@ -591,6 +896,43 @@ final class RuntimeStore: ObservableObject {
         if previousWindowSize != presentationStore?.windowSize {
             presentationStore?.onWindowSizeChange?(presentationStore?.windowSize ?? .zero)
         }
+    }
+
+    private func sessionFingerprint(_ sessions: [AgentSessionSnapshot]) -> String {
+        sessions
+            .map { "\($0.id):\($0.activityState.rawValue):\($0.updatedAt.timeIntervalSince1970)" }
+            .joined(separator: "|")
+    }
+
+    private func semanticSignature(for snapshot: ActivitySourceSnapshot) -> String {
+        let sessionSignature = snapshot.sessions
+            .map { session in
+                [
+                    session.id,
+                    session.origin.rawValue,
+                    session.activityState.rawValue,
+                    session.runningDetail?.rawValue ?? "",
+                    String(session.updatedAt.timeIntervalSince1970),
+                    session.cwd ?? "",
+                    session.focusTarget?.clientOrigin.rawValue ?? "",
+                    session.focusTarget?.terminalClient?.rawValue ?? ""
+                ].joined(separator: ":")
+            }
+            .joined(separator: "|")
+        let usageSignature = snapshot.usageSnapshots
+            .map { "\($0.origin.rawValue):\($0.updatedAt.timeIntervalSince1970):\($0.shortWindowRemaining):\($0.longWindowRemaining)" }
+            .joined(separator: "|")
+        let approvalSignature = snapshot.approvalRequest.map {
+            "\($0.id):\($0.commandText):\($0.createdAt.timeIntervalSince1970)"
+        } ?? ""
+
+        return [
+            sessionSignature,
+            snapshot.statusMessage,
+            snapshot.errorMessage ?? "",
+            approvalSignature,
+            usageSignature
+        ].joined(separator: "||")
     }
 
     private func executeApproval(_ decision: ApprovalDecision, request: ApprovalRequest) {
@@ -687,28 +1029,60 @@ final class RuntimeStore: ObservableObject {
         includeCodex: Bool = true,
         includeOpenCode: Bool = true
     ) {
-        guard force || shouldRefreshUsage(now: .now) else {
-            return
-        }
-
         guard !usageRefreshInFlight else {
             return
         }
 
+        let now = Date()
+        let includedProviderCount = [includeClaude, includeCodex, includeOpenCode].filter { $0 }.count
+        let shouldHonorForce = force && includedProviderCount == 1
+        let shouldFetchClaude = includeClaude && shouldRefreshUsageProvider(
+            lastRefreshAt: lastClaudeUsageRefreshAt,
+            backoffUntil: claudeUsageBackoffUntil,
+            minimumInterval: claudeUsageRefreshMinimumInterval,
+            force: shouldHonorForce,
+            now: now
+        )
+        let shouldFetchCodex = includeCodex && shouldRefreshUsageProvider(
+            lastRefreshAt: lastCodexUsageRefreshAt,
+            backoffUntil: codexUsageBackoffUntil,
+            minimumInterval: codexUsageRefreshMinimumInterval,
+            force: shouldHonorForce,
+            now: now
+        )
+        let shouldFetchOpenCode = includeOpenCode && shouldRefreshUsageProvider(
+            lastRefreshAt: lastOpenCodeUsageRefreshAt,
+            backoffUntil: openCodeUsageBackoffUntil,
+            minimumInterval: openCodeUsageRefreshMinimumInterval,
+            force: shouldHonorForce,
+            now: now
+        )
+
+        guard shouldFetchClaude || shouldFetchCodex || shouldFetchOpenCode else {
+            return
+        }
+
         usageRefreshInFlight = true
+        usageRefreshCount += 1
+        if shouldFetchClaude {
+            claudeUsageFetchCount += 1
+        }
+        if shouldFetchCodex {
+            codexUsageFetchCount += 1
+        }
+        if shouldFetchOpenCode {
+            openCodeUsageFetchCount += 1
+        }
+        logPerformanceCountersIfNeeded()
         let existingState = reducerState.usageProviderState
         let claudeUsageSource = self.claudeUsageSource
         let codexUsageSource = self.codexUsageSource
         let openCodeUsageSource = self.openCodeUsageSource
 
         usageQueue.async { [weak self] in
-            let claudeSnapshot = includeClaude ? claudeUsageSource.fetchUsageSnapshot() : existingState.claude
-            let codexSnapshot = includeCodex ? codexUsageSource.fetchUsageSnapshot() : existingState.codex
-            let openCodeSnapshot = includeOpenCode ? openCodeUsageSource.fetchUsageSnapshot() : existingState.openCode
-            Logger.log(
-                "Usage refresh completed. includeClaude=\(includeClaude) claudeProvider=\(claudeSnapshot?.providerID ?? "nil") claudeDisplay=\(claudeSnapshot?.providerDisplayName ?? "nil") includeCodex=\(includeCodex) includeOpenCode=\(includeOpenCode) openCodeProvider=\(openCodeSnapshot?.providerID ?? "nil") openCodeDisplay=\(openCodeSnapshot?.providerDisplayName ?? "nil").",
-                category: .store
-            )
+            let claudeSnapshot = shouldFetchClaude ? claudeUsageSource.fetchUsageSnapshot() : existingState.claude
+            let codexSnapshot = shouldFetchCodex ? codexUsageSource.fetchUsageSnapshot() : existingState.codex
+            let openCodeSnapshot = shouldFetchOpenCode ? openCodeUsageSource.fetchUsageSnapshot() : existingState.openCode
             let providerState = UsageProviderState(
                 claude: claudeSnapshot,
                 codex: codexSnapshot,
@@ -721,18 +1095,73 @@ final class RuntimeStore: ObservableObject {
                 }
 
                 self.usageRefreshInFlight = false
-                self.lastUsageRefreshAt = .now
+                let completedAt = Date()
+                self.updateUsageRefreshState(
+                    didFetch: shouldFetchClaude,
+                    snapshot: claudeSnapshot,
+                    provider: .claude,
+                    now: completedAt
+                )
+                self.updateUsageRefreshState(
+                    didFetch: shouldFetchCodex,
+                    snapshot: codexSnapshot,
+                    provider: .codex,
+                    now: completedAt
+                )
+                self.updateUsageRefreshState(
+                    didFetch: shouldFetchOpenCode,
+                    snapshot: openCodeSnapshot,
+                    provider: .openCode,
+                    now: completedAt
+                )
                 self.dispatch(.usageProviderStateUpdated(providerState))
             }
         }
     }
 
-    private func shouldRefreshUsage(now: Date) -> Bool {
-        guard let lastUsageRefreshAt else {
-            return true
+    private func shouldRefreshUsageProvider(
+        lastRefreshAt: Date?,
+        backoffUntil: Date?,
+        minimumInterval: TimeInterval,
+        force: Bool,
+        now: Date
+    ) -> Bool {
+        UsageRefreshPolicy(
+            minimumInterval: minimumInterval,
+            failureBackoffInterval: usageFailureBackoffInterval
+        ).shouldRefresh(
+            lastRefreshAt: lastRefreshAt,
+            backoffUntil: backoffUntil,
+            force: force,
+            now: now
+        )
+    }
+
+    private func updateUsageRefreshState<Snapshot>(
+        didFetch: Bool,
+        snapshot: Snapshot?,
+        provider: UsageRefreshProvider,
+        now: Date
+    ) {
+        guard didFetch else {
+            return
         }
 
-        return now.timeIntervalSince(lastUsageRefreshAt) >= usageRefreshMinimumInterval
+        let failureBackoffUntil = UsageRefreshPolicy(
+            minimumInterval: 0,
+            failureBackoffInterval: usageFailureBackoffInterval
+        ).backoffUntil(snapshotWasMissing: snapshot == nil, now: now)
+        switch provider {
+        case .claude:
+            lastClaudeUsageRefreshAt = now
+            claudeUsageBackoffUntil = failureBackoffUntil
+        case .codex:
+            lastCodexUsageRefreshAt = now
+            codexUsageBackoffUntil = failureBackoffUntil
+        case .openCode:
+            lastOpenCodeUsageRefreshAt = now
+            openCodeUsageBackoffUntil = failureBackoffUntil
+        }
     }
 
     private func startCodexRealtimeSourceIfNeeded() {
@@ -757,6 +1186,60 @@ final class RuntimeStore: ObservableObject {
         )
 
         codexRealtimeSourceStarted = started
+    }
+
+    private func startLocalSourceFileWatcher() {
+        localSourceFileWatcher.start(
+            onActivityChange: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, case .localCodex = self.sourceMode else {
+                        return
+                    }
+                    self.refreshLocalCodexStatus()
+                }
+            },
+            onApprovalChange: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, case .localCodex = self.sourceMode else {
+                        return
+                    }
+                    self.refreshLocalApprovalStatus()
+                }
+            }
+        )
+    }
+
+    private func startLocalHookRefreshCallbacks() {
+        let handler: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleLocalHookRefresh()
+            }
+        }
+        localClaudeSource.setActivityChangeHandler(handler)
+        localOpenCodeSource.setActivityChangeHandler(handler)
+    }
+
+    private func stopLocalHookRefreshCallbacks() {
+        localHookRefreshDebounceTask?.cancel()
+        localHookRefreshDebounceTask = nil
+        localClaudeSource.setActivityChangeHandler(nil)
+        localOpenCodeSource.setActivityChangeHandler(nil)
+    }
+
+    private func scheduleLocalHookRefresh() {
+        guard case .localCodex = sourceMode else {
+            return
+        }
+
+        localHookRefreshDebounceTask?.cancel()
+        localHookRefreshDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, !Task.isCancelled, case .localCodex = self.sourceMode else {
+                return
+            }
+            self.refreshLocalCodexStatus()
+            self.refreshLocalApprovalStatus()
+        }
     }
 
     private func refreshSourceHealthReports(claudeReport: SourceHealthReport? = nil) {
@@ -851,6 +1334,65 @@ final class RuntimeStore: ObservableObject {
         return events
     }
 
+    private func scheduleNextLocalCodexPoll() {
+        guard case .localCodex = sourceMode else {
+            return
+        }
+
+        let interval = pollingBackoffPolicy.activityInterval(
+            isActive: isRuntimeActive,
+            lastChangedAt: lastRuntimeChangeAt
+        )
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshLocalCodexStatus()
+            }
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    private func scheduleNextApprovalPoll() {
+        guard case .localCodex = sourceMode else {
+            return
+        }
+
+        let interval = pollingBackoffPolicy.approvalInterval(
+            isActive: isRuntimeActive,
+            hasPendingApproval: approvalRequest != nil,
+            lastChangedAt: lastApprovalChangeAt
+        )
+        approvalTimer?.invalidate()
+        approvalTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshLocalApprovalStatus()
+            }
+        }
+        RunLoop.main.add(approvalTimer!, forMode: .common)
+    }
+
+    private var isRuntimeActive: Bool {
+        codexStatus == .running || sessions.contains { $0.activityState == .running }
+    }
+
+    private func logPerformanceCountersIfNeeded(now: Date = .now) {
+        guard now.timeIntervalSince(lastPerformanceLogAt) >= 60 else {
+            return
+        }
+
+        Logger.log(
+            "Performance counters/min localRefresh=\(localCodexRefreshCount) approvalRefresh=\(localApprovalRefreshCount) usageRefresh=\(usageRefreshCount) usageFetches=claude:\(claudeUsageFetchCount),codex:\(codexUsageFetchCount),openCode:\(openCodeUsageFetchCount) status=\(codexStatus.rawValue) pendingApproval=\(approvalRequest != nil).",
+            category: .store
+        )
+        localCodexRefreshCount = 0
+        localApprovalRefreshCount = 0
+        usageRefreshCount = 0
+        claudeUsageFetchCount = 0
+        codexUsageFetchCount = 0
+        openCodeUsageFetchCount = 0
+        lastPerformanceLogAt = now
+    }
+
     private func restartTimer(interval: TimeInterval, action: @escaping @MainActor () -> Void) {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
@@ -859,16 +1401,6 @@ final class RuntimeStore: ObservableObject {
             }
         }
         RunLoop.main.add(timer!, forMode: .common)
-    }
-
-    private func restartApprovalTimer(interval: TimeInterval, action: @escaping @MainActor () -> Void) {
-        approvalTimer?.invalidate()
-        approvalTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-            Task { @MainActor in
-                action()
-            }
-        }
-        RunLoop.main.add(approvalTimer!, forMode: .common)
     }
 
     private func stopApprovalTimer() {
