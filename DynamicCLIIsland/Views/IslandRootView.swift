@@ -5,6 +5,7 @@ struct IslandRootView: View {
     @ObservedObject var store: ProgressStore
     @State private var activePanelTransition: PanelTransition?
     @State private var panelTransitionCleanupTask: Task<Void, Never>?
+    @State private var observedDisplayMode: ProgressStore.DisplayMode = .island
     @StateObject private var brandLogoImageCache = BrandLogoImageCache()
 
     var body: some View {
@@ -36,8 +37,11 @@ struct IslandRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             activePanelTransition = nil
+            observedDisplayMode = store.displayMode
         }
-        .onChange(of: store.displayMode) { oldValue, newValue in
+        .onChange(of: store.displayMode) { newValue in
+            let oldValue = observedDisplayMode
+            observedDisplayMode = newValue
             handleDisplayModeChange(from: oldValue, to: newValue)
         }
     }
@@ -216,7 +220,7 @@ struct IslandRootView: View {
             .padding(.horizontal, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollClipDisabled()
+        .scrollClipDisabledIfAvailable()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -341,6 +345,17 @@ struct IslandRootView: View {
 
     private var shouldUseSpinnerStatusGlyph: Bool {
         store.approvalRequest != nil || store.activeQuestionPrompt != nil
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func scrollClipDisabledIfAvailable() -> some View {
+        if #available(macOS 14.0, *) {
+            self.scrollClipDisabled()
+        } else {
+            self
+        }
     }
 }
 

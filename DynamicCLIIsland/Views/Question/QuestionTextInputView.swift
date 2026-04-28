@@ -33,7 +33,7 @@ struct QuestionTextInputView: View {
                     get: { questionStore.textAnswer },
                     set: { questionStore.setTextAnswer($0) }
                 ))
-                .scrollContentBackground(.hidden)
+                .hiddenScrollContentBackgroundIfAvailable()
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(.white)
                 .frame(minHeight: 74)
@@ -49,5 +49,16 @@ struct QuestionTextInputView: View {
 
     private var accentGreen: Color {
         Color(red: 0.42, green: 0.90, blue: 0.68)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func hiddenScrollContentBackgroundIfAvailable() -> some View {
+        if #available(macOS 13.0, *) {
+            self.scrollContentBackground(.hidden)
+        } else {
+            self
+        }
     }
 }

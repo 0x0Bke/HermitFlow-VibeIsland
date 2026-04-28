@@ -85,7 +85,7 @@ private struct ProviderAuthEnvKeyFieldRow: View {
                 "",
                 text: $input,
                 prompt: Text("ANTHROPIC_AUTH_TOKEN")
-                    .foregroundStyle(.white.opacity(0.24))
+                    .foregroundColor(.white.opacity(0.24))
             )
             .textFieldStyle(.plain)
             .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -105,13 +105,13 @@ private struct ProviderAuthEnvKeyFieldRow: View {
         .onAppear {
             syncFromRow(force: true)
         }
-        .onChange(of: input) { _, _ in
+        .onChange(of: input) { _ in
             scheduleSubmit()
         }
-        .onChange(of: row.authEnvKey) { _, _ in
+        .onChange(of: row.authEnvKey) { _ in
             syncFromRow(force: false)
         }
-        .onChange(of: refreshToken) { _, _ in
+        .onChange(of: refreshToken) { _ in
             syncFromRow(force: false)
         }
         .onDisappear {
@@ -242,7 +242,7 @@ struct SettingsPanelView: View {
             claudeSettingsInput = claudeSettingsJSONText()
             claudeSettingsLastSubmitted = claudeSettingsInput.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        .onChange(of: providerAuthRefreshToken()) { _, _ in
+        .onChange(of: providerAuthRefreshToken()) { _ in
             let latestUsageCommand = claudeUsageCommandJSONText()
             let normalizedLatestUsageCommand = latestUsageCommand.trimmingCharacters(in: .whitespacesAndNewlines)
             if claudeUsageCommandInput.trimmingCharacters(in: .whitespacesAndNewlines) == claudeUsageCommandLastSubmitted {
@@ -602,7 +602,7 @@ struct SettingsPanelView: View {
 
             PlainJSONEditor(text: text)
                 .frame(maxWidth: .infinity, minHeight: 148, alignment: .leading)
-                .onChange(of: text.wrappedValue) { _, _ in
+                .onChange(of: text.wrappedValue) { _ in
                     onChange()
                 }
         }

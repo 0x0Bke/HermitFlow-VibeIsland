@@ -106,12 +106,10 @@ struct OpenCodeHookInstaller: HookInstaller {
         let alreadyConfigured = plugins.contains { item in
             if let string = item as? String {
                 return string == pluginPath
-                    || string == pluginURL.path(percentEncoded: false)
                     || string.hasSuffix("/plugins/hermitflow.js")
             }
             if let pair = item as? [Any], let string = pair.first as? String {
                 return string == pluginPath
-                    || string == pluginURL.path(percentEncoded: false)
                     || string.hasSuffix("/plugins/hermitflow.js")
             }
             return false

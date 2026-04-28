@@ -181,13 +181,13 @@ struct ApprovalInlineView: View {
             .frame(width: 0, height: 0)
         )
         .onAppear(perform: resetSelection)
-        .onChange(of: request.id) { _, _ in
+        .onChange(of: request.id) { _ in
             resetSelection()
         }
-        .onChange(of: defaultFocus) { _, _ in
+        .onChange(of: defaultFocus) { _ in
             resetSelection()
         }
-        .onChange(of: store.inlineApprovalCommandExpanded) { _, newValue in
+        .onChange(of: store.inlineApprovalCommandExpanded) { newValue in
             isCommandExpanded = newValue
         }
     }
